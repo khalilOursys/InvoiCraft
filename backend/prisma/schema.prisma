@@ -1,0 +1,629 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+//////////////////////////////////////
+// ENUMS
+//////////////////////////////////////
+
+enum UserRole {
+  ADMIN
+  COMMERCIAL
+}
+
+enum PaymentMethod {
+  CASH
+  CHECK
+  BANK_TRANSFER
+  CREDIT_CARD
+  MOBILE_PAYMENT
+}
+
+enum OrderStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+  REFUNDED
+}
+
+enum PurchaseInvoiceType {
+  PURCHASE_ORDER
+  PURCHASE_INVOICE
+  PURCHASE_REFUND
+}
+
+enum SaleInvoiceType {
+  QUOTATION
+  DELIVERY_NOTE
+  SALE_INVOICE
+  SALE_REFUND
+  SHIPPING_NOTE_INVOICE
+}
+
+enum InvoiceStatus {
+  DRAFT
+  VALIDATED
+  PAID
+  CANCELLED
+  CLOSED
+}
+
+enum StockMovementType {
+  INBOUND
+  OUTBOUND
+  ADJUSTMENT
+  RETURN
+  LOSS
+  TRANSFER
+  INITIAL
+  PURCHASE
+  SALE
+}
+
+enum StockMovementStatus {
+  PENDING
+  COMPLETED
+  CANCELLED
+}
+
+enum InventoryCountingStatus {
+  DRAFT
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+//////////////////////////////////////
+// BASE MODELS
+//////////////////////////////////////
+
+model User {
+  id         Int       @id @default(autoincrement())
+  email      String    @unique
+  password   String
+  telephone  String?
+  firstName  String?
+  lastName   String?
+  cin        String?
+  role       UserRole  @default(COMMERCIAL)
+  createdAt  DateTime  @default(now())
+  orders     Order[]
+  stockMovements StockMovement[] @relation("UserStockMovements")
+  inventoryCountsCreated InventoryCount[] @relation("InventoryCountCreator")
+  inventoryCountsCompleted InventoryCount[] @relation("InventoryCountCompleter")
+  stockTransfersRequested StockTransfer[] @relation("StockTransferRequester")
+  stockTransfersApproved StockTransfer[] @relation("StockTransferApprover")
+}
+
+model Category {
+  id          Int       @id @default(autoincrement())
+  name        String
+  description String?
+  products    Product[]
+}
+
+model Brand {
+  id          Int       @id @default(autoincrement())
+  name        String    @unique
+  description String?
+  img         String?
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  products    Product[]
+}
+
+model City {
+  id        Int      @id @default(autoincrement())
+  name      String
+  state     String?
+  country   String   @default("Tunisia")
+  clients   Client[]
+  suppliers Supplier[]
+  saleInvoices SaleInvoiceCity[]
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Client {
+  id           Int             @id @default(autoincrement())
+  name         String
+  phone        String?
+  address      String?
+  taxNumber    String?
+  email        String?
+  cityId       Int?
+  city         City?           @relation(fields: [cityId], references: [id])
+  saleInvoices SaleInvoice[]
+  payments     Payment[]
+  orders       Order[]
+}
+
+model Supplier {
+  id               Int                 @id @default(autoincrement())
+  code             String
+  name             String
+  taxNumber        String?
+  phone            String?
+  address          String?
+  bankRib          String?
+  email            String?
+  cityId           Int?
+  city             City?               @relation(fields: [cityId], references: [id])
+  purchaseInvoices PurchaseInvoice[]
+  payments         Payment[]
+}
+
+model Driver {
+  id            Int     @id @default(autoincrement())
+  firstName     String
+  lastName      String
+  phone         String?
+  email         String?
+  cin           String?
+  licenseNumber String?
+  active        Boolean @default(true)
+  saleInvoices  SaleInvoice[]
+  carId         Int?
+  car           Car?    @relation(fields: [carId], references: [id])
+}
+
+model Car {
+  id            Int      @id @default(autoincrement())
+  registration  String   @unique
+  brand         String?
+  model         String?
+  year          Int?
+  driver        Driver[]
+  createdAt     DateTime @default(now())
+}
+
+model CompanySettings {
+  id          Int     @id @default(autoincrement())
+  companyName String?
+  address     String?
+  phone       String?
+  taxNumber   String?
+  logo        String?
+  rib         String?
+  email       String?
+}
+
+model HeroBanner {
+  id          Int      @id @default(autoincrement())
+  name        String?
+  description String?
+  img         String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+//////////////////////////////////////
+// PRODUCT MODEL
+//////////////////////////////////////
+
+model Product {
+  id            Int       @id @default(autoincrement())
+  reference     String?
+  internalCode  String?
+  name          String
+  description   String?
+
+  stock         Int       @default(0)
+  minStock      Int       @default(0)
+  maxStock      Int?
+  criticalStock Int       @default(2)
+  reservedStock Int       @default(0)
+  
+  purchasePrice Float     @default(0)
+  marginPercent Float     @default(0)
+  salePrice     Float     @default(0)
+  priceIncludingTax Float  @default(0)
+  discount      Float     @default(0)
+  vat           Float     @default(19)
+  img           String?
+
+  lastStockUpdate DateTime?
+  lastSaleDate    DateTime?
+  lastPurchaseDate DateTime?
+  
+  isActive      Boolean   @default(true)
+  isInventoryTracked Boolean @default(true)
+
+  categoryId    Int
+  category      Category  @relation(fields: [categoryId], references: [id])
+
+  brandId       Int?
+  brand         Brand?    @relation(fields: [brandId], references: [id])
+
+  purchaseInvoiceItems PurchaseInvoiceItem[]
+  saleInvoiceItems     SaleInvoiceItem[]
+  orderItems           OrderItem[]
+  stockMovements       StockMovement[]
+  inventoryCountItems  InventoryCountItem[]
+  stockAlert           StockAlert?
+  reservations         StockReservation[]
+  transferItems        StockTransferItem[]
+}
+
+//////////////////////////////////////
+// PURCHASE INVOICE MODELS
+//////////////////////////////////////
+
+model PurchaseInvoice {
+  id            Int                     @id @default(autoincrement())
+  invoiceNumber String
+  date          DateTime                @default(now())
+  type          PurchaseInvoiceType
+  status        InvoiceStatus           @default(DRAFT)
+  
+  originalInvoiceId Int?
+  originalInvoice   PurchaseInvoice?    @relation("PurchaseRefunds", fields: [originalInvoiceId], references: [id])
+  refunds           PurchaseInvoice[]   @relation("PurchaseRefunds")
+
+  pdfUrl        String?
+
+  supplierId    Int
+  supplier      Supplier                @relation(fields: [supplierId], references: [id])
+
+  items         PurchaseInvoiceItem[]
+  payments      Payment[]               @relation("PurchaseInvoicePayments")
+
+  totalHT       Float                   @default(0)
+  totalTTC      Float                   @default(0)
+
+  createdAt     DateTime                @default(now())
+}
+
+model PurchaseInvoiceItem {
+  id              Int     @id @default(autoincrement())
+  quantity        Int
+  price           Float
+  receivedQuantity Int?
+  isStockUpdated  Boolean @default(false)
+
+  invoiceId       Int
+  productId       Int
+
+  invoice         PurchaseInvoice @relation(fields: [invoiceId], references: [id])
+  product         Product         @relation(fields: [productId], references: [id])
+  
+  stockMovement   StockMovement?
+}
+
+//////////////////////////////////////
+// SALE INVOICE MODELS
+//////////////////////////////////////
+
+model SaleInvoiceCity {
+  id            Int         @id @default(autoincrement())
+  saleInvoiceId Int
+  cityId        Int
+  createdAt     DateTime    @default(now())
+
+  saleInvoice   SaleInvoice @relation(fields: [saleInvoiceId], references: [id], onDelete: Cascade)
+  city          City        @relation(fields: [cityId], references: [id])
+
+  @@unique([saleInvoiceId, cityId])
+}
+
+model DeliveryNoteConsolidation {
+  id                        Int @id @default(autoincrement())
+  consolidatedSaleInvoiceId Int
+  consolidatedSaleInvoice   SaleInvoice @relation("ConsolidatedToSource", fields: [consolidatedSaleInvoiceId], references: [id], onDelete: Cascade)
+  
+  sourceDeliveryNoteId      Int
+  sourceDeliveryNote        SaleInvoice @relation("SourceToConsolidated", fields: [sourceDeliveryNoteId], references: [id])
+  
+  createdAt                 DateTime @default(now())
+  
+  @@unique([consolidatedSaleInvoiceId, sourceDeliveryNoteId])
+}
+
+model SaleInvoice {
+  id            Int                @id @default(autoincrement())
+  invoiceNumber String
+  date          DateTime           @default(now())
+  startDate     DateTime?
+  endDate       DateTime?
+  type          SaleInvoiceType
+  status        InvoiceStatus      @default(DRAFT)
+  taxStamp      Float              @default(1)
+  
+  shippingNoteId Int?
+  shippingNote   SaleInvoice?      @relation("ShippingNoteToDeliveryNotes", fields: [shippingNoteId], references: [id])
+  deliveryNotes  SaleInvoice[]     @relation("ShippingNoteToDeliveryNotes")
+  
+  originalInvoiceId Int?
+  originalInvoice   SaleInvoice?   @relation("SaleRefunds", fields: [originalInvoiceId], references: [id])
+  refunds           SaleInvoice[]  @relation("SaleRefunds")
+  consolidatedDeliveryNotes DeliveryNoteConsolidation[] @relation("ConsolidatedToSource")
+  consolidatedInInvoice     DeliveryNoteConsolidation[] @relation("SourceToConsolidated")
+
+  clientId      Int?
+  client        Client?            @relation(fields: [clientId], references: [id])
+  
+  driverId      Int?
+  driver        Driver?            @relation(fields: [driverId], references: [id])
+  
+  cities        SaleInvoiceCity[]
+  items         SaleInvoiceItem[]
+  payments      Payment[]          @relation("SaleInvoicePayments")
+  stockReservations StockReservation[]
+
+  totalHT       Float              @default(0)
+  totalTTC      Float              @default(0)
+
+  createdAt     DateTime           @default(now())
+}
+
+model SaleInvoiceItem {
+  id                   Int      @id @default(autoincrement())
+  quantity             Int
+  deliveredQuantity    Int?
+  price                Float
+  isStockUpdated       Boolean  @default(false)
+
+  vatRate              Float    @default(0)
+  vatAmount            Float    @default(0)
+  
+  shippingNoteItemId   Int?
+
+  invoiceId            Int
+  productId            Int
+
+  invoice              SaleInvoice              @relation(fields: [invoiceId], references: [id])
+  product              Product                  @relation(fields: [productId], references: [id])
+
+  shippingNoteItem     SaleInvoiceItem?         @relation("ItemToSource", fields: [shippingNoteItemId], references: [id])
+  derivedItems         SaleInvoiceItem[]        @relation("ItemToSource")
+  
+  stockMovement        StockMovement?
+}
+
+//////////////////////////////////////
+// PAYMENT MODEL
+//////////////////////////////////////
+
+model Payment {
+  id            Int           @id @default(autoincrement())
+  amount        Float
+  method        PaymentMethod
+  createdAt     DateTime      @default(now())
+
+  purchaseInvoiceId Int?
+  purchaseInvoice   PurchaseInvoice? @relation("PurchaseInvoicePayments", fields: [purchaseInvoiceId], references: [id])
+
+  supplierId        Int?
+  supplier          Supplier?        @relation(fields: [supplierId], references: [id])
+
+  saleInvoiceId     Int?
+  saleInvoice       SaleInvoice?     @relation("SaleInvoicePayments", fields: [saleInvoiceId], references: [id])
+
+  clientId          Int?
+  client            Client?          @relation(fields: [clientId], references: [id])
+}
+
+//////////////////////////////////////
+// ORDER MODELS
+//////////////////////////////////////
+
+model Order {
+  id            Int          @id @default(autoincrement())
+  orderNumber   String       @unique
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  
+  items         OrderItem[]
+  orderPayments OrderPayment[]
+  
+  subtotal      Float        @default(0)
+  discountPercent Float      @default(0)
+  discountAmount Float       @default(0)
+  discountedSubtotal Float   @default(0)
+  tax           Float        @default(0)
+  total         Float        @default(0)
+  
+  clientId      Int?
+  client        Client?      @relation(fields: [clientId], references: [id])
+  
+  status        OrderStatus  @default(PENDING)
+  tableNumber   String?
+  notes         String?
+  
+  cashierId     Int
+  cashier       User         @relation(fields: [cashierId], references: [id])
+  
+  stockReservations StockReservation[]
+  stockReleasedAt DateTime?
+}
+
+model OrderItem {
+  id              Int      @id @default(autoincrement())
+  quantity        Int
+  price           Float    @default(0)
+  total           Float    @default(0)
+  
+  orderId         Int
+  order           Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  productId       Int
+  product         Product  @relation(fields: [productId], references: [id])
+  
+  stockMovement   StockMovement?
+}
+
+model OrderPayment {
+  id            Int           @id @default(autoincrement())
+  amount        Float
+  method        PaymentMethod
+  change        Float?        @default(0)
+  createdAt     DateTime      @default(now())
+  
+  orderId       Int
+  order         Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+}
+
+//////////////////////////////////////
+// INVENTORY MODELS
+//////////////////////////////////////
+
+model StockMovement {
+  id              Int                @id @default(autoincrement())
+  movementNumber  String             @unique
+  type            StockMovementType
+  quantity        Int
+  previousStock   Int
+  newStock        Int
+  reason          String?
+  reference       String?
+  status          StockMovementStatus @default(COMPLETED)
+  
+  productId       Int
+  product         Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  purchaseInvoiceItemId Int?         @unique
+  purchaseInvoiceItem   PurchaseInvoiceItem? @relation(fields: [purchaseInvoiceItemId], references: [id])
+  
+  saleInvoiceItemId Int?              @unique
+  saleInvoiceItem   SaleInvoiceItem? @relation(fields: [saleInvoiceItemId], references: [id])
+  
+  orderItemId     Int?               @unique
+  orderItem       OrderItem?         @relation(fields: [orderItemId], references: [id])
+  
+  inventoryCountId Int?
+  inventoryCount  InventoryCount?    @relation(fields: [inventoryCountId], references: [id])
+  
+  createdAt       DateTime           @default(now())
+  createdBy       Int
+  user            User               @relation("UserStockMovements", fields: [createdBy], references: [id])
+  notes           String?
+
+  @@index([productId])
+  @@index([createdAt])
+  @@index([type])
+}
+
+model InventoryCount {
+  id              Int                @id @default(autoincrement())
+  countNumber     String             @unique
+  name            String
+  scheduledDate   DateTime
+  completedDate   DateTime?
+  status          InventoryCountingStatus @default(DRAFT)
+  
+  items           InventoryCountItem[]
+  stockMovements  StockMovement[]
+  
+  notes           String?
+  createdAt       DateTime           @default(now())
+  createdBy       Int
+  creator         User               @relation("InventoryCountCreator", fields: [createdBy], references: [id])
+  completedBy     Int?
+  completer       User?              @relation("InventoryCountCompleter", fields: [completedBy], references: [id])
+  verifiedBy      Int?
+}
+
+model InventoryCountItem {
+  id              Int                @id @default(autoincrement())
+  expectedQuantity Int
+  countedQuantity Int
+  difference      Int
+  
+  productId       Int
+  product         Product            @relation(fields: [productId], references: [id])
+  
+  inventoryCountId Int
+  inventoryCount  InventoryCount     @relation(fields: [inventoryCountId], references: [id], onDelete: Cascade)
+  
+  notes           String?
+  
+  @@unique([inventoryCountId, productId])
+}
+
+model StockAlert {
+  id              Int                @id @default(autoincrement())
+  productId       Int                @unique
+  product         Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  minThreshold    Int                @default(5)
+  criticalThreshold Int              @default(2)
+  maxThreshold    Int?
+  reorderQuantity Int?
+  
+  notifyEmail     Boolean            @default(true)
+  notifyDashboard Boolean            @default(true)
+  
+  lastAlertSent   DateTime?
+  lastAlertType   String?
+  
+  isActive        Boolean            @default(true)
+  createdAt       DateTime           @default(now())
+  updatedAt       DateTime           @updatedAt
+}
+
+model StockReservation {
+  id              Int                @id @default(autoincrement())
+  reservationNumber String           @unique
+  quantity        Int
+  expiresAt       DateTime
+  
+  productId       Int
+  product         Product            @relation(fields: [productId], references: [id], onDelete: Cascade)
+  
+  orderId         Int?
+  order           Order?             @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  saleInvoiceId   Int?
+  saleInvoice     SaleInvoice?       @relation(fields: [saleInvoiceId], references: [id])
+  
+  sessionId       String?
+  createdAt       DateTime           @default(now())
+  isActive        Boolean            @default(true)
+  
+  @@index([productId])
+  @@index([sessionId])
+  @@index([expiresAt])
+}
+
+model StockTransfer {
+  id              Int                @id @default(autoincrement())
+  transferNumber  String             @unique
+  sourceLocation  String
+  destinationLocation String
+  status          StockMovementStatus @default(PENDING)
+  
+  items           StockTransferItem[]
+  
+  requestedDate   DateTime           @default(now())
+  completedDate   DateTime?
+  notes           String?
+  
+  requestedBy     Int
+  requester       User               @relation("StockTransferRequester", fields: [requestedBy], references: [id])
+  approvedBy      Int?
+  approver        User?              @relation("StockTransferApprover", fields: [approvedBy], references: [id])
+}
+
+model StockTransferItem {
+  id              Int                @id @default(autoincrement())
+  quantity        Int
+  transferredQuantity Int            @default(0)
+  
+  productId       Int
+  product         Product            @relation(fields: [productId], references: [id])
+  
+  transferId      Int
+  transfer        StockTransfer      @relation(fields: [transferId], references: [id], onDelete: Cascade)
+  
+  notes           String?
+}

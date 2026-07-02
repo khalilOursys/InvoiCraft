@@ -1,0 +1,7 @@
+-- AlterTable
+ALTER TABLE "Order" ADD COLUMN     "clientId" INTEGER,
+ADD COLUMN     "discountAmount" DOUBLE PRECISION NOT NULL DEFAULT 0,
+ADD COLUMN     "discountPercent" DOUBLE PRECISION NOT NULL DEFAULT 0;
+
+-- AddForeignKey
+ALTER TABLE "Order" ADD CONSTRAINT "Order_clientId_fkey" FOREIGN KEY ("clientId") REFERENCES "Client"("id") ON DELETE SET NULL ON UPDATE CASCADE;

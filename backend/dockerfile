@@ -1,0 +1,78 @@
+# # ----------------------
+# # Stage 1: Builder
+# # ----------------------
+# FROM node:18-alpine AS builder
+
+# WORKDIR /app
+
+# # Installer les dépendances
+# COPY package*.json ./
+# RUN npm install
+
+# # Copier le reste du code
+# COPY . .
+
+# # Générer le client Prisma
+# RUN npx prisma generate
+
+# # Build Nest.js
+# RUN npm run build
+
+# # ----------------------
+# # Stage 2: Production
+# # ----------------------
+# FROM node:18-alpine
+
+# WORKDIR /app
+
+# # Installer curl pour healthcheck (optionnel, utile pour scripts)
+# RUN apk add --no-cache curl
+
+# # Copier les fichiers du builder
+# COPY --from=builder /app/dist ./dist
+# COPY --from=builder /app/node_modules ./node_modules
+# COPY --from=builder /app/package*.json ./
+# COPY --from=builder /app/prisma ./prisma
+# # COPY --from=builder /app/uploads ./uploads
+
+# EXPOSE 3001
+
+# # Commande de démarrage : Prisma attend la DB et deploy les migrations
+# CMD ["sh", "-c", "until nc -z postgres 5432; do echo 'Waiting for PostgreSQL...'; sleep 2; done && npx prisma migrate deploy && node dist/main.js"]
+
+# ----------------------
+# Stage 1: Builder
+# ----------------------
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install
+
+COPY . .
+
+RUN npx prisma generate
+RUN npm run build
+RUN npm prune --omit=dev
+
+
+# ----------------------
+# Stage 2: Production
+# ----------------------
+FROM node:18-alpine
+
+WORKDIR /app
+
+RUN apk add --no-cache netcat-openbsd
+
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package*.json ./
+COPY --from=builder /app/prisma ./prisma
+
+EXPOSE 3001
+
+CMD ["sh", "-c", "until nc -z postgres 5432; do echo 'Waiting for PostgreSQL...'; sleep 2; done && npx prisma migrate deploy && node dist/main.js"]
+
+

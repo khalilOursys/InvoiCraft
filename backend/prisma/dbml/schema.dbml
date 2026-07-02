@@ -1,0 +1,472 @@
+//// ------------------------------------------------------
+//// THIS FILE WAS AUTOMATICALLY GENERATED (DO NOT MODIFY)
+//// ------------------------------------------------------
+
+Table User {
+  id String [pk]
+  email String [not null]
+  password String [not null]
+  telephone String
+  name String
+  firstName String
+  lastName String
+  role Role [not null, default: 'CLIENT']
+  isActive Boolean [not null, default: true]
+  oauthProvider String
+  oauthId String
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  orders Order [not null]
+  cart Cart
+  wishlist Wishlist [not null]
+  notifications Notification [not null]
+  bulkRequests BulkClientRequest
+  ratings ProductRating [not null]
+  stockAlerts StockAlert [not null]
+  reviewedBulkRequests BulkClientRequest [not null]
+  userCities UserCity [not null]
+}
+
+Table UserCity {
+  id String [pk]
+  userId String [not null]
+  user User
+  cityId String [not null]
+  city City
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table BulkClientRequest {
+  id String [pk]
+  userId String [unique, not null]
+  user User [not null]
+  storeName String [not null]
+  address String
+  rib String
+  taxNumber String
+  legalDocs String [not null]
+  status String [not null, default: 'en attente']
+  reviewedById String
+  reviewedBy User
+  submittedAt DateTime [default: `now()`, not null]
+  reviewedAt DateTime
+}
+
+Table Product {
+  id String [pk]
+  name String [not null]
+  description String
+  color String [default: 'Black']
+  price Float [not null]
+  purchasePrice Float [default: 0]
+  stock Int [not null]
+  isBulk Boolean [not null, default: false]
+  discount Float
+  isFeatured Boolean [not null, default: false]
+  specs Json
+  categoryId String [not null]
+  category Category [not null]
+  brandId String [not null]
+  isActive Boolean [not null, default: true]
+  brand Brand [not null]
+  similarTo Product [not null]
+  similar Product [not null]
+  orderItems OrderItem [not null]
+  images ProductImage [not null]
+  variants ProductVariant [not null]
+  ratings ProductRating [not null]
+  attributes ProductAttribute [not null]
+  wishlist Wishlist [not null]
+  cartItems CartItem [not null]
+  bundleProducts BundleProduct [not null]
+  translations ProductTranslation [not null]
+  stockAlerts StockAlert [not null]
+  averageRating Float [default: 0]
+  ratingCount Int [not null, default: 0]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  bulkProduct BulkProduct [not null]
+}
+
+Table BulkProduct {
+  id String [pk]
+  name String
+  description String
+  productId String [not null]
+  product Product
+  bulkPrice Float [not null]
+  minQuantity Int [not null]
+  discount Float
+  isActive Boolean [not null, default: true]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  orderItems OrderItem [not null]
+  cartItems CartItem [not null]
+  bulkProductCities BulkProductCity [not null]
+  images ProductImage [not null]
+}
+
+Table BulkProductCity {
+  id String [pk]
+  productId String [not null]
+  product BulkProduct
+  cityId String [not null]
+  city City
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table City {
+  id String [pk]
+  name String [not null]
+  state String
+  country String [not null, default: 'Tunisia']
+  isActive Boolean [not null, default: true]
+  bulkProductCities BulkProductCity [not null]
+  userCities UserCity [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table ProductImage {
+  id String [pk]
+  productId String
+  bulkProductId String
+  product Product
+  bulkProduct BulkProduct
+  variantId String
+  variant ProductVariant
+  url String [not null]
+  isPrimary Boolean [not null, default: false]
+}
+
+Table ProductVariant {
+  id String [pk]
+  productId String [not null]
+  product Product [not null]
+  name String [not null]
+  stock Int [not null]
+  color String
+  isActive Boolean [not null, default: true]
+  images ProductImage [not null]
+  orderItems OrderItem [not null]
+  cartItems CartItem [not null]
+  stockAlerts StockAlert [not null]
+}
+
+Table ProductAttribute {
+  id String [pk]
+  productId String [not null]
+  product Product [not null]
+  key String [not null]
+  value String [not null]
+}
+
+Table ProductRating {
+  id String [pk]
+  productId String [not null]
+  userId String [not null]
+  product Product [not null]
+  user User [not null]
+  rating Int [not null]
+  comment String
+  images RatingImage [not null]
+  createdAt DateTime [default: `now()`, not null]
+
+  indexes {
+    (productId, userId) [unique]
+  }
+}
+
+Table RatingImage {
+  id String [pk]
+  ratingId String [not null]
+  rating ProductRating [not null]
+  url String [not null]
+}
+
+Table ProductTranslation {
+  id String [pk]
+  productId String [not null]
+  language String [not null]
+  name String [not null]
+  description String
+  product Product [not null]
+
+  indexes {
+    (productId, language) [unique]
+  }
+}
+
+Table Category {
+  id String [pk]
+  name String [unique, not null]
+  slug String
+  description String
+  bgUrl String
+  iconUrl String
+  bannerColor String [not null]
+  bannerText String [not null]
+  isActive Boolean [not null, default: true]
+  sort String [not null, default: '1']
+  products Product [not null]
+  parentId String
+  parent Category
+  children Category [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table Brand {
+  id String [pk]
+  name String [unique, not null]
+  description String
+  img String
+  isActive Boolean [not null, default: true]
+  products Product [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table DiscountCode {
+  id String [pk]
+  code String [unique, not null]
+  discount Float [not null]
+  expiresAt DateTime
+  orders Order [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table Order {
+  id String [pk]
+  userId String [not null]
+  user User [not null]
+  isBulk Int [not null, default: 0]
+  total Float [not null]
+  status String [not null, default: 'en attente']
+  address String [not null]
+  phoneNumber String [not null]
+  discountCodeId String
+  discountCode DiscountCode
+  orderItems OrderItem [not null]
+  payments Payment [not null]
+  notifications Notification [not null]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table OrderItem {
+  id String [pk]
+  orderId String [not null]
+  productId String
+  variantId String
+  bulkId String
+  bundleId String
+  quantity Int [not null]
+  price Float [not null]
+  order Order [not null]
+  product Product
+  variant ProductVariant
+  bundle ProductBundle
+  bulk BulkProduct
+}
+
+Table Payment {
+  id String [pk]
+  orderId String [unique, not null]
+  order Order [not null]
+  amount Float [not null]
+  method String [not null]
+  status String [not null]
+  paymentId String
+  createdAt DateTime [default: `now()`, not null]
+}
+
+Table Cart {
+  id String [pk]
+  userId String [unique, not null]
+  user User [not null]
+  items CartItem [not null]
+  updatedAt DateTime [not null]
+}
+
+Table CartItem {
+  id String [pk]
+  cartId String [not null]
+  productId String [not null]
+  variantId String
+  bulkId String
+  cart Cart [not null]
+  product Product [not null]
+  variant ProductVariant
+  bulk BulkProduct
+  quantity Int [not null]
+}
+
+Table Wishlist {
+  id String [pk]
+  userId String [not null]
+  productId String [not null]
+  user User [not null]
+  product Product [not null]
+  addedAt DateTime [default: `now()`, not null]
+
+  indexes {
+    (userId, productId) [unique]
+  }
+}
+
+Table StockAlert {
+  id String [pk]
+  userId String [not null]
+  productId String [not null]
+  variantId String
+  user User [not null]
+  product Product [not null]
+  variant ProductVariant
+  createdAt DateTime [default: `now()`, not null]
+
+  indexes {
+    (userId, productId, variantId) [unique]
+  }
+}
+
+Table ProductBundle {
+  id String [pk]
+  name String [not null]
+  discount Float [not null]
+  isActive Boolean [not null, default: true]
+  products BundleProduct [not null]
+  orderItems OrderItem [not null]
+  createdAt DateTime [default: `now()`, not null]
+  expiresAt DateTime
+  img String
+  stock Int [not null, default: 0]
+}
+
+Table BundleProduct {
+  id String [pk]
+  bundleId String [not null]
+  productId String [not null]
+  bundle ProductBundle [not null]
+  product Product [not null]
+  quantity Int [not null]
+}
+
+Table Notification {
+  id String [pk]
+  userId String [not null]
+  user User [not null]
+  orderId String
+  order Order
+  message String [not null]
+  isRead Boolean [not null, default: false]
+  createdAt DateTime [default: `now()`, not null]
+}
+
+Table HeroBanner {
+  id String [pk]
+  name String
+  description String
+  img String
+  isActive Boolean [not null, default: true]
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+}
+
+Table SimilarProducts {
+  similartoId String [ref: > Product.id]
+  similarId String [ref: > Product.id]
+}
+
+Enum Role {
+  CLIENT
+  BULK_CLIENT
+  MANAGER
+  ADMIN
+  GUEST
+}
+
+Ref: UserCity.userId > User.id
+
+Ref: UserCity.cityId > City.id
+
+Ref: BulkClientRequest.userId - User.id
+
+Ref: BulkClientRequest.reviewedById - User.id
+
+Ref: Product.categoryId > Category.id
+
+Ref: Product.brandId > Brand.id
+
+Ref: BulkProduct.productId > Product.id
+
+Ref: BulkProductCity.productId > BulkProduct.id
+
+Ref: BulkProductCity.cityId > City.id
+
+Ref: ProductImage.productId > Product.id
+
+Ref: ProductImage.bulkProductId > BulkProduct.id
+
+Ref: ProductImage.variantId > ProductVariant.id
+
+Ref: ProductVariant.productId > Product.id
+
+Ref: ProductAttribute.productId > Product.id
+
+Ref: ProductRating.productId > Product.id
+
+Ref: ProductRating.userId > User.id
+
+Ref: RatingImage.ratingId > ProductRating.id
+
+Ref: ProductTranslation.productId > Product.id
+
+Ref: Category.parentId - Category.id
+
+Ref: Order.userId > User.id
+
+Ref: Order.discountCodeId > DiscountCode.id
+
+Ref: OrderItem.orderId > Order.id
+
+Ref: OrderItem.productId > Product.id
+
+Ref: OrderItem.variantId > ProductVariant.id
+
+Ref: OrderItem.bundleId > ProductBundle.id
+
+Ref: OrderItem.bulkId > BulkProduct.id
+
+Ref: Payment.orderId > Order.id
+
+Ref: Cart.userId - User.id
+
+Ref: CartItem.cartId > Cart.id
+
+Ref: CartItem.productId > Product.id
+
+Ref: CartItem.variantId > ProductVariant.id
+
+Ref: CartItem.bulkId > BulkProduct.id
+
+Ref: Wishlist.userId > User.id
+
+Ref: Wishlist.productId > Product.id
+
+Ref: StockAlert.userId > User.id
+
+Ref: StockAlert.productId > Product.id
+
+Ref: StockAlert.variantId > ProductVariant.id
+
+Ref: BundleProduct.bundleId > ProductBundle.id
+
+Ref: BundleProduct.productId > Product.id
+
+Ref: Notification.userId > User.id
+
+Ref: Notification.orderId > Order.id
