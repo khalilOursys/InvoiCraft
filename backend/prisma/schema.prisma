@@ -253,8 +253,96 @@ model Product {
   stockAlert           StockAlert?
   reservations         StockReservation[]
   transferItems        StockTransferItem[]
+  
+  craftProducts CraftProduct[]
 }
 
+model CraftProduct {
+  id               Int                      @id @default(autoincrement())
+  reference        String                   @unique
+  name             String
+  description      String?                  
+  unit             String                   // mg, ml, g, L, kg, unit
+  amount           Float                    // Current stock amount
+  totalCost        Float?                   // Calculated total cost
+  salePrice        Float?                   // Calculated sale price
+  marginPercent    Float                    @default(30)
+  vat              Float                    @default(19)
+  minStock         Float                    @default(0)
+  img              String?                  
+  isActive         Boolean                  @default(true)
+  productId        Int?                     
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  
+  // Relations
+  product          Product?                 @relation(fields: [productId], references: [id])
+  craftMaterials   CraftProductMaterial[]   // Junction table for materials
+  craftServices    CraftProductService[]    // Junction table for services
+  
+  @@map("craft_products")
+}
+
+// Junction table for CraftProduct <-> RawMaterial (many-to-many)
+model CraftProductMaterial {
+  id              Int          @id @default(autoincrement())
+  craftProductId  Int
+  rawMaterialId   Int
+  amount          Float        // Amount of raw material needed
+  
+  craftProduct    CraftProduct @relation(fields: [craftProductId], references: [id], onDelete: Cascade)
+  rawMaterial     RawMaterial  @relation(fields: [rawMaterialId], references: [id])
+  
+  @@unique([craftProductId, rawMaterialId])
+  @@map("craft_product_materials")
+}
+
+// Junction table for CraftProduct <-> Service (many-to-many)
+model CraftProductService {
+  id              Int          @id @default(autoincrement())
+  craftProductId  Int
+  serviceId       Int
+  
+  craftProduct    CraftProduct @relation(fields: [craftProductId], references: [id], onDelete: Cascade)
+  service         Service      @relation(fields: [serviceId], references: [id])
+  
+  @@unique([craftProductId, serviceId])
+  @@map("craft_product_services")
+}
+
+// Keep the existing RawMaterial model
+model RawMaterial {
+  id              Int                      @id @default(autoincrement())
+  reference       String
+  description     String?
+  name            String
+  unit            String                   // mg, ml, g, L, kg, unit
+  amount          Float                    @default(0)
+  purchasePrice   Float                    @default(0)
+  isActive        Boolean                  @default(true)
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  
+  craftMaterials  CraftProductMaterial[]   // Junction table for craft products
+  
+  @@map("raw_materials")
+}
+
+// Keep the existing Service model
+model Service {
+  id              Int                      @id @default(autoincrement())
+  reference       String
+  description     String?
+  name            String
+  price           Float                    @default(0)
+  isActive        Boolean                  @default(true)
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  
+  craftServices   CraftProductService[]    // Junction table for craft products
+  
+  @@map("services")
+}
 //////////////////////////////////////
 // PURCHASE INVOICE MODELS
 //////////////////////////////////////

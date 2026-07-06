@@ -19,6 +19,9 @@ import { CitiesModule } from './cities/cities.module';
 import { HeroBannerModule } from './hero-banner/hero-banner.module';
 import { OrderModule } from './order/order.module';
 import { InventoryModule } from './inventory/inventory.module';
+import { RawMaterialModule } from './raw-material/raw-material.module';
+import { ServiceModule } from './service/service.module';
+import { CraftProductModule } from './craft-product/craft-product.module';
 
 @Module({
   imports: [
@@ -41,6 +44,9 @@ import { InventoryModule } from './inventory/inventory.module';
     OrderModule,
     InventoryModule,
     DriverModule,
+    RawMaterialModule,
+    ServiceModule,
+    CraftProductModule,
   ],
   controllers: [AppController],
   providers: [PrismaService],
