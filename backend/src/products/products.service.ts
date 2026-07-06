@@ -89,6 +89,7 @@ export class ProductsService {
           minStock: createProductDto.minStock || 0,
           discount: createProductDto.discount || 0,
           vat: createProductDto.vat || 19,
+          fodec: createProductDto.fodec || 0,
           img: imageUrl,
           lastStockUpdate: initialStock > 0 ? new Date() : null,
         },

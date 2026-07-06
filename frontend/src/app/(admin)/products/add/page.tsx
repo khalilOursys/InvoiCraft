@@ -63,6 +63,7 @@ export default function AddProductPage() {
     priceIncludingTax: 0,
     discount: 0,
     vat: "19",
+    fodec: 0, // ADD FODEC FIELD
     categoryId: "",
     brandId: "",
   });
@@ -376,6 +377,25 @@ export default function AddProductPage() {
                   />
                 </div>
 
+                {/* FODEC - NEW FIELD */}
+                <div>
+                  <label className="mb-3 block text-sm font-medium text-black dark:text-white">
+                    FODEC (%)
+                  </label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    max="100"
+                    value={formData.fodec}
+                    onChange={(e) => setFormData({ ...formData, fodec: Number(e.target.value) })}
+                    className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                  />
+                  <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                    FODEC (Fonds de Développement de la Compétitivité)
+                  </p>
+                </div>
+
                 {/* TVA */}
                 <div>
                   <label className="mb-3 block text-sm font-medium text-black dark:text-white">
@@ -463,7 +483,7 @@ export default function AddProductPage() {
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="rounded-md border border-stroke px-6 py-3 font-medium hover:bg-gray-100 dark:hover:bg-meta-4 transition-colors"
+                  className="rounded-md bg-primary px-6 py-3 font-medium text-white hover:bg-primary/90 transition-colors disabled:opacity-70"
                 >
                   {isSubmitting ? (
                     <>

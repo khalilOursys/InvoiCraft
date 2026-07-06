@@ -95,6 +95,98 @@ export class CraftProductService {
     return totalCost * (1 + marginPercent / 100);
   }
 
+  // ==================== PRODUCT STOCK SYNC FUNCTIONS ====================
+
+  /**
+   * Add quantity to product stock (increment)
+   */
+  private async addToProductStock(
+    productId: number,
+    quantityToAdd: number,
+  ): Promise<void> {
+    if (!productId || quantityToAdd <= 0) return;
+
+    await this.prisma.product.update({
+      where: { id: productId },
+      data: {
+        stock: {
+          increment: quantityToAdd,
+        },
+      },
+    });
+
+    console.log({
+      step: 'PRODUCT STOCK - ADD',
+      productId: productId,
+      quantityAdded: quantityToAdd,
+    });
+  }
+
+  /**
+   * Subtract quantity from product stock (decrement)
+   */
+  private async subtractFromProductStock(
+    productId: number,
+    quantityToSubtract: number,
+  ): Promise<void> {
+    if (!productId || quantityToSubtract <= 0) return;
+
+    // Check if product has enough stock
+    const product = await this.prisma.product.findUnique({
+      where: { id: productId },
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Product with ID ${productId} not found`);
+    }
+
+    if (product.stock < quantityToSubtract) {
+      throw new BadRequestException(
+        `Insufficient product stock. Available: ${product.stock}, Required: ${quantityToSubtract}`,
+      );
+    }
+
+    await this.prisma.product.update({
+      where: { id: productId },
+      data: {
+        stock: {
+          decrement: quantityToSubtract,
+        },
+      },
+    });
+
+    console.log({
+      step: 'PRODUCT STOCK - SUBTRACT',
+      productId: productId,
+      quantitySubtracted: quantityToSubtract,
+    });
+  }
+
+  /**
+   * Sync product stock with craft product quantity
+   * Calculates the difference and adds/subtracts accordingly
+   */
+  private async syncProductStock(
+    productId: number,
+    oldQuantity: number,
+    newQuantity: number,
+  ): Promise<void> {
+    if (!productId) return;
+
+    const quantityDifference = newQuantity - oldQuantity;
+
+    if (quantityDifference > 0) {
+      // Craft product quantity increased → ADD to product stock
+      await this.addToProductStock(productId, quantityDifference);
+    } else if (quantityDifference < 0) {
+      // Craft product quantity decreased → SUBTRACT from product stock
+      await this.subtractFromProductStock(
+        productId,
+        Math.abs(quantityDifference),
+      );
+    }
+  }
+
   // ==================== CREATE ====================
 
   async create(data: CreateCraftProductDto) {
@@ -162,7 +254,8 @@ export class CraftProductService {
 
     const salePrice = this.calculateSalePrice(totalCost, data.marginPercent);
 
-    return this.prisma.craftProduct.create({
+    // Create craft product
+    const craftProduct = await this.prisma.craftProduct.create({
       data: {
         reference: data.reference,
         name: data.name,
@@ -202,6 +295,13 @@ export class CraftProductService {
         product: true,
       },
     });
+
+    // SYNC: Add craft product quantity to product stock
+    if (data.productId) {
+      await this.addToProductStock(data.productId, data.amount);
+    }
+
+    return craftProduct;
   }
 
   // ==================== READ ====================
@@ -246,7 +346,7 @@ export class CraftProductService {
         product: true,
       },
       orderBy: {
-        createdAt: 'desc', // or 'asc'
+        createdAt: 'desc',
       },
     });
   }
@@ -482,7 +582,8 @@ export class CraftProductService {
       }
     });
 
-    return this.prisma.craftProduct.update({
+    // Update craft product
+    const updatedCraftProduct = await this.prisma.craftProduct.update({
       where: { id },
       data: updateData,
       include: {
@@ -499,6 +600,19 @@ export class CraftProductService {
         product: true,
       },
     });
+
+    // SYNC: Update product stock based on quantity change
+    if (updatedCraftProduct.productId) {
+      const oldQuantity = existing.amount;
+      const newQuantity = data.amount !== undefined ? data.amount : oldQuantity;
+      await this.syncProductStock(
+        updatedCraftProduct.productId,
+        oldQuantity,
+        newQuantity,
+      );
+    }
+
+    return updatedCraftProduct;
   }
 
   async updateByProductId(productId: number, data: UpdateCraftProductDto) {
@@ -583,7 +697,7 @@ export class CraftProductService {
       }
 
       // Decrease craft product stock
-      return prisma.craftProduct.update({
+      const updatedCraftProduct = await prisma.craftProduct.update({
         where: { id },
         data: {
           amount: {
@@ -604,6 +718,16 @@ export class CraftProductService {
           product: true,
         },
       });
+
+      // SYNC: Subtract from product stock
+      if (updatedCraftProduct.productId) {
+        await this.subtractFromProductStock(
+          updatedCraftProduct.productId,
+          quantityToSell,
+        );
+      }
+
+      return updatedCraftProduct;
     });
   }
 
@@ -619,9 +743,10 @@ export class CraftProductService {
       throw new BadRequestException('Amount cannot be negative');
     }
 
-    await this.findOne(id);
+    const existing = await this.findOne(id);
 
-    return this.prisma.craftProduct.update({
+    // Update craft product stock
+    const updatedCraftProduct = await this.prisma.craftProduct.update({
       where: { id },
       data: { amount: newAmount },
       include: {
@@ -638,6 +763,17 @@ export class CraftProductService {
         product: true,
       },
     });
+
+    // SYNC: Update product stock based on stock change
+    if (updatedCraftProduct.productId) {
+      await this.syncProductStock(
+        updatedCraftProduct.productId,
+        existing.amount,
+        newAmount,
+      );
+    }
+
+    return updatedCraftProduct;
   }
 
   async updateStockByProductId(productId: number, newAmount: number) {
