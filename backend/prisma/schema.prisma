@@ -230,6 +230,7 @@ model Product {
   priceIncludingTax Float  @default(0)
   discount      Float     @default(0)
   vat           Float     @default(19)
+  fodec         Float     @default(0)
   img           String?
 
   lastStockUpdate DateTime?

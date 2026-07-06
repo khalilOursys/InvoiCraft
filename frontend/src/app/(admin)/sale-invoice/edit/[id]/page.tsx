@@ -447,7 +447,7 @@ function EditSaleInvoiceContent({ id }: { id: string }) {
                     </thead>
                     <tbody>
                       {invoiceItems.map((item, index) => (
-                        <tr key={item.id || index} className="border-b">
+                        <tr key={`row-${index}`} className="border-b">
                           <td className="p-4">
                             <select
                               value={item.productId}

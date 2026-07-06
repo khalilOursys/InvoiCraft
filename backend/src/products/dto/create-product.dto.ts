@@ -51,6 +51,10 @@ export class CreateProductDto {
   vat?: number;
 
   @IsNumber()
+  @IsOptional()
+  fodec?: number;
+
+  @IsNumber()
   @IsNotEmpty()
   categoryId: number;
 

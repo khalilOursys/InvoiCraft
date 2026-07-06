@@ -69,6 +69,9 @@ interface InvoiceItem {
     vatAmount: number;
     totalHT: number;
     totalTTC: number;
+    fodecRate: number; // ADD FODEC RATE
+    fodecAmount: number; // ADD FODEC AMOUNT
+    totalWithFodec: number; // ADD TOTAL WITH FODEC
 }
 
 interface ClientDetails {
@@ -190,6 +193,8 @@ function SaleInvoiceDetails() {
     const [totalHT, setTotalHT] = useState(0);
     const [totalTTC, setTotalTTC] = useState(0);
     const [totalVAT, setTotalVAT] = useState(0);
+    const [totalFODEC, setTotalFODEC] = useState(0); // ADD TOTAL FODEC
+    const [totalWithFODEC, setTotalWithFODEC] = useState(0); // ADD TOTAL WITH FODEC
     const [clientDetails, setClientDetails] = useState<ClientDetails>({} as ClientDetails);
     const [driverDetails, setDriverDetails] = useState<DriverDetails>({} as DriverDetails);
     const [cities, setCities] = useState<CityItem[]>([]);
@@ -265,25 +270,47 @@ function SaleInvoiceDetails() {
             setDriverDetails(invoiceData.driver || {});
             setCities(invoiceData.cities || []);
 
-            setInvoiceItems(
-                (invoiceData.items || []).map((item: any) => {
-                    const product = productsData?.find((p: any) => p.id === item.productId) || {};
-                    const itemHT = item.price * item.quantity;
-                    const itemVAT = item.vatRate ? itemHT * (item.vatRate / 100) : 0;
-                    const vatRate = item.vatRate || (invoiceData.type === "QUOTATION" ? 0 : 0);
+            // Process items with FODEC - CORRECTED with quantity multiplication
+            let totalFodecSum = 0;
+            const processedItems = (invoiceData.items || []).map((item: any) => {
+                const product = productsData?.find((p: any) => p.id === item.productId) || {};
 
-                    return {
-                        productId: item.productId,
-                        productName: product?.name || "Produit inconnu",
-                        quantity: item.quantity,
-                        price: item.price,
-                        vatRate: vatRate,
-                        vatAmount: item.vatAmount || itemVAT,
-                        totalHT: itemHT,
-                        totalTTC: itemHT + itemVAT,
-                    };
-                }),
-            );
+                // Calculate per unit values
+                const unitHT = item.price;
+                const unitVAT = item.vatRate ? unitHT * (item.vatRate / 100) : 0;
+                const unitTTC = unitHT + unitVAT;
+
+                // Calculate FODEC per unit (based on TTC)
+                const fodecRate = product.fodec || 0;
+                const unitFodecAmount = unitTTC * (fodecRate / 100);
+
+                // Multiply by quantity for totals
+                const quantity = item.quantity;
+                const itemHT = unitHT * quantity;
+                const itemVAT = unitVAT * quantity;
+                const itemTTC = unitTTC * quantity;
+                const itemFodecAmount = unitFodecAmount * quantity;
+
+                totalFodecSum += itemFodecAmount;
+
+                return {
+                    productId: item.productId,
+                    productName: product?.name || "Produit inconnu",
+                    quantity: quantity,
+                    price: item.price,
+                    vatRate: item.vatRate || (invoiceData.type === "QUOTATION" ? 0 : 0),
+                    vatAmount: itemVAT,
+                    totalHT: itemHT,
+                    totalTTC: itemTTC,
+                    fodecRate: fodecRate,
+                    fodecAmount: itemFodecAmount,
+                    totalWithFodec: itemTTC + itemFodecAmount,
+                };
+            });
+
+            setInvoiceItems(processedItems);
+            setTotalFODEC(totalFodecSum);
+            setTotalWithFODEC((invoiceData.totalTTC || 0) + totalFodecSum);
         }
     }, [invoiceData, productsData]);
 
@@ -728,8 +755,9 @@ function SaleInvoiceDetails() {
                     doc.text("P.HT.T : ", rightX, blockStartY + 5);
                     doc.text("Timbre fiscal : ", rightX, blockStartY + 10);
                     doc.text("TVA : ", rightX, blockStartY + 15);
-                    doc.text("TTC : ", rightX, blockStartY + 20);
-                    doc.text("Net à payer : ", rightX, blockStartY + 25);
+                    doc.text("FODEC : ", rightX, blockStartY + 20); // ADD FODEC LINE
+                    doc.text("TTC : ", rightX, blockStartY + 25);
+                    doc.text("Net à payer : ", rightX, blockStartY + 30);
 
                     doc.setTextColor(0);
                     const valueOffset = 40;
@@ -752,22 +780,29 @@ function SaleInvoiceDetails() {
                         { align: "right" },
                     );
                     doc.text(
-                        formatNumber(totalTTC) + " DT",
+                        formatNumber(totalFODEC) + " DT", // ADD FODEC VALUE
                         rightX + valueOffset,
                         blockStartY + 20,
                         { align: "right" },
                     );
                     doc.text(
-                        formatNumber(totalTTC + 1) + " DT",
+                        formatNumber(totalTTC) + " DT",
                         rightX + valueOffset,
                         blockStartY + 25,
+                        { align: "right" },
+                    );
+                    doc.text(
+                        formatNumber(totalWithFODEC) + " DT", // ADD TOTAL WITH FODEC
+                        rightX + valueOffset,
+                        blockStartY + 30,
                         { align: "right" },
                     );
                 } else {
                     doc.text("P.HT.T : ", rightX, blockStartY + 5);
                     doc.text("TVA : ", rightX, blockStartY + 10);
-                    doc.text("TTC : ", rightX, blockStartY + 15);
-                    doc.text("Net à payer : ", rightX, blockStartY + 20);
+                    doc.text("FODEC : ", rightX, blockStartY + 15); // ADD FODEC LINE
+                    doc.text("TTC : ", rightX, blockStartY + 20);
+                    doc.text("Net à payer : ", rightX, blockStartY + 25);
 
                     doc.setTextColor(0);
                     const valueOffset = 40;
@@ -784,7 +819,7 @@ function SaleInvoiceDetails() {
                         { align: "right" },
                     );
                     doc.text(
-                        formatNumber(totalTTC) + " DT",
+                        formatNumber(totalFODEC) + " DT", // ADD FODEC VALUE
                         rightX + valueOffset,
                         blockStartY + 15,
                         { align: "right" },
@@ -795,12 +830,18 @@ function SaleInvoiceDetails() {
                         blockStartY + 20,
                         { align: "right" },
                     );
+                    doc.text(
+                        formatNumber(totalWithFODEC) + " DT", // ADD TOTAL WITH FODEC
+                        rightX + valueOffset,
+                        blockStartY + 25,
+                        { align: "right" },
+                    );
                 }
             }
 
             const wordsY = blockStartY + 45;
-            const integerPart = Math.floor(totalTTC);
-            const millimes = Math.round((totalTTC - integerPart) * 1000);
+            const integerPart = Math.floor(totalWithFODEC); // Use total with FODEC
+            const millimes = Math.round((totalWithFODEC - integerPart) * 1000);
             const millimesText = millimes === 0 ? "zéro" : numberToFrench(millimes);
             doc.setFontSize(12);
             doc.setTextColor(100);
@@ -858,20 +899,6 @@ function SaleInvoiceDetails() {
 
     const getUpdateRoute = (invoiceType: string, invoiceId: string) => {
         return `/sale-invoice/edit/${invoiceId}`;
-        /* switch (invoiceType) {
-            case "DELIVERY_NOTE":
-                return `/delivery-note/update/${invoiceId}`;
-            case "SALE_INVOICE":
-                return `/sale-invoice/update/${invoiceId}`;
-            case "SHIPPING_NOTE_INVOICE":
-                return `/shipping-note/update/${invoiceId}`;
-            case "QUOTATION":
-                return `/sale-invoice/update/${invoiceId}`;
-            case "SALE_REFUND":
-                return `/refund-invoice/update/${invoiceId}`;
-            default:
-                return `/sale-invoice/update/${invoiceId}`;
-        } */
     };
 
     const handleUpdate = () => {
@@ -927,7 +954,7 @@ function SaleInvoiceDetails() {
                             </CardDescription>
                         </div>
                         <Badge variant="secondary" className="text-lg px-4 py-2 bg-white text-blue-600">
-                            {totalTTC.toFixed(3)} TND
+                            {totalWithFODEC.toFixed(3)} TND
                         </Badge>
                     </div>
                 </CardHeader>
@@ -1061,6 +1088,9 @@ function SaleInvoiceDetails() {
                                     <TableCell isHeader className="text-right font-semibold p-3">
                                         Total TTC
                                     </TableCell>
+                                    <TableCell isHeader className="text-center font-semibold p-3">
+                                        FODEC
+                                    </TableCell>
                                 </TableRow>
                             </TableHeader>
                             <TableBody>
@@ -1092,11 +1122,20 @@ function SaleInvoiceDetails() {
                                             <TableCell className="text-right p-3 font-bold text-blue-600">
                                                 {item.totalTTC.toFixed(3)} TND
                                             </TableCell>
+                                            <TableCell className="text-center p-3">
+                                                {item.fodecRate > 0 ? (
+                                                    <Badge variant="warning">
+                                                        {item.fodecRate}%
+                                                    </Badge>
+                                                ) : (
+                                                    <span className="text-xs text-gray-400">-</span>
+                                                )}
+                                            </TableCell>
                                         </TableRow>
                                     ))
                                 ) : (
                                     <TableRow>
-                                        <TableCell colSpan={7} className="text-center py-8 text-gray-500">
+                                        <TableCell colSpan={8} className="text-center py-8 text-gray-500">
                                             <Package className="h-8 w-8 mx-auto mb-2 opacity-50" />
                                             <p>Aucun article dans cette facture</p>
                                         </TableCell>
@@ -1154,10 +1193,14 @@ function SaleInvoiceDetails() {
                                         <span className="font-medium">Total TVA :</span>
                                         <span>{totalVAT.toFixed(3)} TND</span>
                                     </div>
+                                    <div className="flex justify-between">
+                                        <span className="font-medium">Total FODEC :</span>
+                                        <span>{totalFODEC.toFixed(3)} TND</span>
+                                    </div>
                                     <Separator />
                                     <div className="flex justify-between text-lg font-bold text-blue-600">
-                                        <span>Total TTC :</span>
-                                        <span>{totalTTC.toFixed(3)} TND</span>
+                                        <span>Total TTC (avec FODEC) :</span>
+                                        <span>{totalWithFODEC.toFixed(3)} TND</span>
                                     </div>
                                 </div>
                             </CardContent>
