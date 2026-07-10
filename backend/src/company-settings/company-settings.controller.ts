@@ -1,7 +1,10 @@
+// company-settings.controller.ts
 import {
   Controller,
   Put,
   Get,
+  Post,
+  Delete,
   Body,
   UploadedFile,
   UseInterceptors,
@@ -20,12 +23,22 @@ export class CompanySettingsController {
     return this.service.get();
   }
 
+  // API 1: Update profile information (without logo)
   @Put()
+  updateProfile(@Body() body: UpdateCompanySettingsDto) {
+    return this.service.updateProfile(body);
+  }
+
+  // API 2: Upload/Update logo only
+  @Post('logo')
   @UseInterceptors(FileInterceptor('logo', companyLogoMulter))
-  updateAll(
-    @Body() body: UpdateCompanySettingsDto,
-    @UploadedFile() file?: Express.Multer.File,
-  ) {
-    return this.service.updateAll(body, file?.filename);
+  uploadLogo(@UploadedFile() file: Express.Multer.File) {
+    return this.service.uploadLogo(file.filename);
+  }
+
+  // API 3: Delete logo
+  @Delete('logo')
+  deleteLogo() {
+    return this.service.deleteLogo();
   }
 }

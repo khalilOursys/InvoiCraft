@@ -32,7 +32,10 @@ import {
   FileCheckIcon,
   TrendingUpIcon,
   PackageSearchIcon,
-  SettingsIcon
+  SettingsIcon,
+  LayersIcon,
+  WrenchIcon,
+  WalletIcon
 } from "lucide-react";
 
 type NavItem = {
@@ -94,13 +97,13 @@ const navItems: NavItem[] = [
     ],
   },
   {
-    name: "Vente comptoir",
-    icon: <TrendingUpIcon />,
+    name: "Dépenses",
+    icon: <WalletIcon size={20} />,
     subItems: [
       {
-        name: "Point de vente",
-        icon: <ShoppingCartIcon size={20} />,
-        path: "/pos",
+        name: "Liste des dépenses",
+        icon: <FileTextIcon size={16} />,
+        path: "/expenses",
       },
     ],
   },
@@ -112,6 +115,16 @@ const navItems: NavItem[] = [
         name: "Produits",
         icon: <BoxCubeIcon />,
         path: "/products",
+      },
+      {
+        name: "Matières Premières",
+        icon: <LayersIcon size={20} />,
+        path: "/raw-materials",
+      },
+      {
+        name: "Services",
+        icon: <WrenchIcon size={20} />,
+        path: "/services",
       },
       {
         name: "Marques",

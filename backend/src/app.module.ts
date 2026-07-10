@@ -22,6 +22,7 @@ import { InventoryModule } from './inventory/inventory.module';
 import { RawMaterialModule } from './raw-material/raw-material.module';
 import { ServiceModule } from './service/service.module';
 import { CraftProductModule } from './craft-product/craft-product.module';
+import { ExpenseModule } from './expense/expense.module';
 
 @Module({
   imports: [
@@ -47,6 +48,7 @@ import { CraftProductModule } from './craft-product/craft-product.module';
     RawMaterialModule,
     ServiceModule,
     CraftProductModule,
+    ExpenseModule,
   ],
   controllers: [AppController],
   providers: [PrismaService],
