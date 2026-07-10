@@ -716,3 +716,19 @@ model StockTransferItem {
   
   notes           String?
 }
+
+//////////////////////////////////////
+// EXPENSE MODEL
+//////////////////////////////////////
+
+model Expense {
+  id              Int      @id @default(autoincrement())
+  title           String   // Raison
+  amount          Float    // Montant
+  date            DateTime // Date
+  receiptImage    String?  // File (optional)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@map("expenses")
+}
