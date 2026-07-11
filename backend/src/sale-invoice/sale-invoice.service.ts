@@ -11,6 +11,7 @@ import { UpdateStatusDto } from './dto/update-status.dto';
 import { InvoiceStatus, SaleInvoiceType, Prisma } from '@prisma/client';
 import { CreateSaleInvoiceDto } from './dto/create-sale-invoice.dto';
 import { UpdateSaleInvoiceDto } from './dto/update-sale-invoice.dto';
+type PaymentStatus = 'PAID' | 'PARTIAL' | 'UNPAID';
 
 @Injectable()
 export class SaleInvoiceService {
@@ -2434,5 +2435,420 @@ export class SaleInvoiceService {
       type: type,
       nextInvoiceNumber: formattedNumber,
     }; */
+  }
+
+  // ==================== PAYMENT CALCULATION METHODS ====================
+
+  /**
+   * Calculate payments for a single sale invoice
+   */
+  async getInvoicePaymentDetails(invoiceId: number) {
+    const invoice = await this.prisma.saleInvoice.findUnique({
+      where: { id: invoiceId },
+      include: {
+        payments: true,
+        client: true,
+        items: {
+          include: {
+            product: true,
+          },
+        },
+      },
+    });
+
+    if (!invoice) {
+      throw new NotFoundException(
+        `Sale invoice with ID ${invoiceId} not found`,
+      );
+    }
+
+    const totalPaid = invoice.payments.reduce(
+      (sum, payment) => sum + payment.amount,
+      0,
+    );
+    const totalAmount = invoice.totalTTC || 0;
+    const remainingAmount = totalAmount - totalPaid;
+    const paidPercentage =
+      totalAmount > 0 ? (totalPaid / totalAmount) * 100 : 0;
+    const status = this.getPaymentStatus(totalPaid, totalAmount);
+
+    return {
+      invoice: {
+        id: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        date: invoice.date,
+        type: invoice.type,
+        status: invoice.status,
+        client: invoice.client,
+      },
+      paymentSummary: {
+        totalAmount,
+        totalPaid,
+        remainingAmount,
+        paidPercentage: Math.round(paidPercentage * 100) / 100,
+        status,
+        statusLabel: this.getPaymentStatusLabel(status),
+        progressWidth: Math.min(paidPercentage, 100),
+        paymentCount: invoice.payments.length,
+        formattedTotal: `${totalAmount.toFixed(2)} TND`,
+        formattedPaid: `${totalPaid.toFixed(2)} TND`,
+        formattedRemaining: `${remainingAmount.toFixed(2)} TND`,
+      },
+      payments: invoice.payments.map((p) => ({
+        id: p.id,
+        amount: p.amount,
+        method: p.method,
+        createdAt: p.createdAt,
+      })),
+      items: invoice.items.map((item) => ({
+        id: item.id,
+        productId: item.productId,
+        productName: item.product.name,
+        quantity: item.quantity,
+        price: item.price,
+        total: item.quantity * item.price,
+        vatRate: item.vatRate,
+        vatAmount: item.vatAmount,
+      })),
+    };
+  }
+
+  /**
+   * Get all sale invoices for a client with payment calculations
+   */
+  async getClientInvoicesWithPayments(clientId: number) {
+    const client = await this.prisma.client.findUnique({
+      where: { id: clientId },
+    });
+
+    if (!client) {
+      throw new NotFoundException(`Client with ID ${clientId} not found`);
+    }
+
+    const invoices = await this.prisma.saleInvoice.findMany({
+      where: { clientId },
+      include: {
+        payments: true,
+        items: {
+          include: {
+            product: true,
+          },
+        },
+      },
+      orderBy: {
+        date: 'desc',
+      },
+    });
+
+    // Transform to simplified format
+    const simplifiedInvoices = invoices.map((invoice) => {
+      const totalPaid = invoice.payments.reduce(
+        (sum, payment) => sum + payment.amount,
+        0,
+      );
+      const totalAmount = invoice.totalTTC || 0;
+      const remainingAmount = totalAmount - totalPaid;
+      const paidPercentage =
+        totalAmount > 0 ? (totalPaid / totalAmount) * 100 : 0;
+      const status = this.getPaymentStatus(totalPaid, totalAmount);
+
+      return {
+        id: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        date: invoice.date,
+        type: invoice.type,
+        status: invoice.status,
+        totalHT: invoice.totalHT,
+        totalTTC: invoice.totalTTC,
+        taxStamp: invoice.taxStamp,
+        totalPaid: Math.round(totalPaid * 100) / 100,
+        remainingAmount: Math.round(remainingAmount * 100) / 100,
+        paidPercentage: Math.round(paidPercentage * 100) / 100,
+        paymentStatus: status,
+        statusLabel: this.getPaymentStatusLabel(status),
+        paymentCount: invoice.payments.length,
+        payments: invoice.payments.map((p) => ({
+          id: p.id,
+          amount: p.amount,
+          method: p.method,
+          createdAt: p.createdAt,
+        })),
+        items: invoice.items.map((item) => ({
+          id: item.id,
+          productId: item.productId,
+          productName: item.product.name,
+          quantity: item.quantity,
+          price: item.price,
+          vatRate: item.vatRate,
+          vatAmount: item.vatAmount,
+          total: item.quantity * item.price,
+        })),
+      };
+    });
+
+    return simplifiedInvoices;
+  }
+
+  /**
+   * Get payment summary for all sale invoices
+   */
+  async getAllSaleInvoicesPaymentSummary() {
+    const invoices = await this.prisma.saleInvoice.findMany({
+      include: {
+        payments: true,
+        client: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+      orderBy: {
+        date: 'desc',
+      },
+    });
+
+    return invoices.map((invoice) => {
+      const totalPaid = invoice.payments.reduce(
+        (sum, payment) => sum + payment.amount,
+        0,
+      );
+      const totalAmount = invoice.totalTTC || 0;
+      const remainingAmount = totalAmount - totalPaid;
+      const paidPercentage =
+        totalAmount > 0 ? (totalPaid / totalAmount) * 100 : 0;
+      const status = this.getPaymentStatus(totalPaid, totalAmount);
+
+      return {
+        id: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        date: invoice.date,
+        type: invoice.type,
+        status: invoice.status,
+        client: invoice.client,
+        totalAmount,
+        totalPaid,
+        remainingAmount,
+        paidPercentage: Math.round(paidPercentage * 100) / 100,
+        paymentStatus: status,
+        statusLabel: this.getPaymentStatusLabel(status),
+        progressWidth: Math.min(paidPercentage, 100),
+        paymentCount: invoice.payments.length,
+        formattedTotal: `${totalAmount.toFixed(2)} TND`,
+        formattedPaid: `${totalPaid.toFixed(2)} TND`,
+        formattedRemaining: `${remainingAmount.toFixed(2)} TND`,
+      };
+    });
+  }
+
+  /**
+   * Get client balance
+   */
+  async getClientBalance(clientId: number) {
+    const client = await this.prisma.client.findUnique({
+      where: { id: clientId },
+    });
+
+    if (!client) {
+      throw new NotFoundException(`Client with ID ${clientId} not found`);
+    }
+
+    const invoices = await this.prisma.saleInvoice.findMany({
+      where: { clientId },
+      include: {
+        payments: true,
+      },
+    });
+
+    let totalAmount = 0;
+    let totalPaid = 0;
+
+    invoices.forEach((invoice) => {
+      const invoiceTotal = invoice.totalTTC || 0;
+      const invoicePaid = invoice.payments.reduce(
+        (sum, p) => sum + p.amount,
+        0,
+      );
+
+      totalAmount += invoiceTotal;
+      totalPaid += invoicePaid;
+    });
+
+    const balance = totalAmount - totalPaid;
+
+    return {
+      client: {
+        id: client.id,
+        name: client.name,
+        phone: client.phone,
+        email: client.email,
+        address: client.address,
+        taxNumber: client.taxNumber,
+      },
+      summary: {
+        totalInvoices: invoices.length,
+        totalAmount,
+        totalPaid,
+        balance,
+        balanceStatus: balance > 0 ? 'DEBIT' : balance < 0 ? 'CREDIT' : 'ZERO',
+        formattedBalance: `${Math.abs(balance).toFixed(2)} TND ${balance > 0 ? '(Debit)' : balance < 0 ? '(Credit)' : ''}`,
+      },
+      invoices: invoices.map((invoice) => ({
+        id: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        date: invoice.date,
+        total: invoice.totalTTC || 0,
+        paid: invoice.payments.reduce((sum, p) => sum + p.amount, 0),
+        remaining:
+          (invoice.totalTTC || 0) -
+          invoice.payments.reduce((sum, p) => sum + p.amount, 0),
+        status: invoice.status,
+        paymentCount: invoice.payments.length,
+      })),
+    };
+  }
+
+  /**
+   * Get overdue sale invoices
+   */
+  async getOverdueSaleInvoices(clientId?: number) {
+    const where: Prisma.SaleInvoiceWhereInput = {
+      status: {
+        in: [InvoiceStatus.VALIDATED, InvoiceStatus.DRAFT],
+      },
+    };
+
+    if (clientId) {
+      where.clientId = clientId;
+    }
+
+    const invoices = await this.prisma.saleInvoice.findMany({
+      where,
+      include: {
+        payments: true,
+        client: true,
+      },
+      orderBy: {
+        date: 'asc',
+      },
+    });
+
+    const overdueInvoices = invoices
+      .map((invoice) => {
+        const totalPaid = invoice.payments.reduce(
+          (sum, payment) => sum + payment.amount,
+          0,
+        );
+        const totalAmount = invoice.totalTTC || 0;
+        const remainingAmount = totalAmount - totalPaid;
+        const status = this.getPaymentStatus(totalPaid, totalAmount);
+
+        const daysOverdue = this.calculateDaysOverdue(invoice.date);
+
+        return {
+          ...invoice,
+          remainingAmount,
+          paymentStatus: status,
+          statusLabel: this.getPaymentStatusLabel(status),
+          daysOverdue,
+          isOverdue: daysOverdue > 30 && status !== 'PAID',
+          formattedRemaining: `${remainingAmount.toFixed(2)} TND`,
+        };
+      })
+      .filter(
+        (inv) =>
+          (inv.paymentStatus === 'PARTIAL' || inv.paymentStatus === 'UNPAID') &&
+          inv.isOverdue,
+      );
+
+    return {
+      totalOverdue: overdueInvoices.length,
+      totalOverdueAmount: overdueInvoices.reduce(
+        (sum, inv) => sum + inv.remainingAmount,
+        0,
+      ),
+      invoices: overdueInvoices,
+    };
+  }
+
+  /**
+   * Bulk update payment status for sale invoices
+   */
+  async updateBulkPaymentStatus(invoiceIds: number[]) {
+    const results = [];
+
+    for (const id of invoiceIds) {
+      const paymentData = await this.getInvoicePaymentDetails(id);
+      const status = paymentData.paymentSummary.status;
+
+      let invoiceStatus: InvoiceStatus;
+      if (status === 'PAID') {
+        invoiceStatus = InvoiceStatus.PAID;
+      } else if (status === 'PARTIAL') {
+        invoiceStatus = InvoiceStatus.VALIDATED;
+      } else {
+        invoiceStatus = InvoiceStatus.VALIDATED;
+      }
+
+      const updated = await this.prisma.saleInvoice.update({
+        where: { id },
+        data: { status: invoiceStatus },
+      });
+
+      results.push({
+        invoiceId: id,
+        invoiceNumber: updated.invoiceNumber,
+        oldStatus: updated.status,
+        newStatus: invoiceStatus,
+        paymentStatus: status,
+      });
+    }
+
+    return {
+      processed: results.length,
+      results,
+    };
+  }
+
+  // ==================== HELPER METHODS ====================
+  /* private getPaymentStatus(totalPaid: number, totalAmount: number): 'PAID' | 'PARTIAL' | 'UNPAID' {
+  if (totalAmount === 0) return 'PAID';
+  if (totalPaid >= totalAmount) return 'PAID';
+  if (totalPaid > 0) return 'PARTIAL';
+  return 'UNPAID';
+}
+
+private getPaymentStatusLabel(status: string): string {
+  const labels = {
+    PAID: '✅ Paid',
+    PARTIAL: '⏳ Partial Payment',
+    UNPAID: '❌ Unpaid',
+  };
+  return labels[status] || status;
+} */
+  private getPaymentStatus(
+    totalPaid: number,
+    totalAmount: number,
+  ): PaymentStatus {
+    if (totalAmount === 0) return 'PAID';
+    if (totalPaid >= totalAmount) return 'PAID';
+    if (totalPaid > 0) return 'PARTIAL';
+    return 'UNPAID';
+  }
+
+  private getPaymentStatusLabel(status: PaymentStatus): string {
+    const labels = {
+      PAID: '✅ Paid',
+      PARTIAL: '⏳ Partial Payment',
+      UNPAID: '❌ Unpaid',
+    };
+    return labels[status] || status;
+  }
+
+  private calculateDaysOverdue(date: Date): number {
+    const today = new Date();
+    const invoiceDate = new Date(date);
+    const diffTime = today.getTime() - invoiceDate.getTime();
+    return Math.floor(diffTime / (1000 * 60 * 60 * 24));
   }
 }

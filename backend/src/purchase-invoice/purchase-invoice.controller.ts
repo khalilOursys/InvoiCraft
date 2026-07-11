@@ -122,4 +122,68 @@ export class PurchaseInvoiceController {
       endDate,
     });
   }
+
+  // ==================== PAYMENT API ENDPOINTS ====================
+
+  /**
+   * Get payment summary for a single invoice
+   * GET /purchase-invoices/:id/payments
+   */
+  @Get(':id/payments')
+  getInvoicePayments(@Param('id', ParseIntPipe) id: number) {
+    return this.purchaseInvoiceService.calculateInvoicePayments(id);
+  }
+
+  /**
+   * Get all purchase invoices for a supplier with payment calculations
+   * GET /purchase-invoices/supplier/:supplierId/payments
+   */
+  @Get('supplier/:supplierId/payments')
+  getSupplierInvoicesWithPayments(
+    @Param('supplierId', ParseIntPipe) supplierId: number,
+  ) {
+    return this.purchaseInvoiceService.getSupplierInvoicesWithPayments(
+      supplierId,
+    );
+  }
+
+  /**
+   * Get supplier balance
+   * GET /purchase-invoices/supplier/:supplierId/balance
+   */
+  @Get('supplier/:supplierId/balance')
+  getSupplierBalance(@Param('supplierId', ParseIntPipe) supplierId: number) {
+    return this.purchaseInvoiceService.getSupplierBalance(supplierId);
+  }
+
+  /**
+   * Get payment summary for all invoices
+   * GET /purchase-invoices/payments/summary
+   */
+  @Get('payments/summary')
+  getAllPaymentSummary() {
+    return this.purchaseInvoiceService.getAllPurchaseInvoicesPaymentSummary();
+  }
+
+  /**
+   * Get overdue invoices
+   * GET /purchase-invoices/overdue?supplierId=1
+   */
+  @Get('overdue')
+  getOverdueInvoices(@Query('supplierId') supplierId?: string) {
+    const parsedSupplierId = supplierId ? parseInt(supplierId) : undefined;
+    return this.purchaseInvoiceService.getOverduePurchaseInvoices(
+      parsedSupplierId,
+    );
+  }
+
+  /**
+   * Bulk update payment status
+   * POST /purchase-invoices/payments/bulk-update
+   * Body: { "invoiceIds": [1, 2, 3] }
+   */
+  @Post('payments/bulk-update')
+  bulkUpdatePaymentStatus(@Body() body: { invoiceIds: number[] }) {
+    return this.purchaseInvoiceService.updateBulkPaymentStatus(body.invoiceIds);
+  }
 }

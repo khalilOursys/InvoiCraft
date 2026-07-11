@@ -168,4 +168,64 @@ export class SaleInvoiceController {
       parsedDriverId,
     );
   }
+
+  // ==================== PAYMENT API ENDPOINTS ====================
+
+  /**
+   * Get payment details for a single invoice
+   * GET /sale-invoices/:id/payments
+   */
+  @Get(':id/payments')
+  getInvoicePaymentDetails(@Param('id', ParseIntPipe) id: number) {
+    return this.saleInvoiceService.getInvoicePaymentDetails(id);
+  }
+
+  /**
+   * Get all sale invoices for a client with payment calculations
+   * GET /sale-invoices/client/:clientId/payments
+   */
+  @Get('client/:clientId/payments')
+  getClientInvoicesWithPayments(
+    @Param('clientId', ParseIntPipe) clientId: number,
+  ) {
+    return this.saleInvoiceService.getClientInvoicesWithPayments(clientId);
+  }
+
+  /**
+   * Get client balance
+   * GET /sale-invoices/client/:clientId/balance
+   */
+  @Get('client/:clientId/balance')
+  getClientBalance(@Param('clientId', ParseIntPipe) clientId: number) {
+    return this.saleInvoiceService.getClientBalance(clientId);
+  }
+
+  /**
+   * Get payment summary for all invoices
+   * GET /sale-invoices/payments/summary
+   */
+  @Get('payments/summary')
+  getAllPaymentSummary() {
+    return this.saleInvoiceService.getAllSaleInvoicesPaymentSummary();
+  }
+
+  /**
+   * Get overdue invoices
+   * GET /sale-invoices/overdue?clientId=1
+   */
+  @Get('overdue')
+  getOverdueInvoices(@Query('clientId') clientId?: string) {
+    const parsedClientId = clientId ? parseInt(clientId) : undefined;
+    return this.saleInvoiceService.getOverdueSaleInvoices(parsedClientId);
+  }
+
+  /**
+   * Bulk update payment status
+   * POST /sale-invoices/payments/bulk-update
+   * Body: { "invoiceIds": [1, 2, 3] }
+   */
+  @Post('payments/bulk-update')
+  bulkUpdatePaymentStatus(@Body() body: { invoiceIds: number[] }) {
+    return this.saleInvoiceService.updateBulkPaymentStatus(body.invoiceIds);
+  }
 }
