@@ -284,7 +284,7 @@ export default function AddProductPage() {
                 </div>
 
                 {/* Stock */}
-                <div>
+                {/* <div>
                   <label className="mb-3 block text-sm font-medium text-black dark:text-white">
                     Stock
                   </label>
@@ -295,7 +295,7 @@ export default function AddProductPage() {
                     onChange={(e) => setFormData({ ...formData, stock: Number(e.target.value) })}
                     className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
                   />
-                </div>
+                </div> */}
 
                 {/* Stock minimum */}
                 <div>
@@ -483,7 +483,7 @@ export default function AddProductPage() {
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="rounded-md bg-primary px-6 py-3 font-medium text-white hover:bg-primary/90 transition-colors disabled:opacity-70"
+                  className="rounded-md border border-stroke px-6 py-3 font-medium hover:bg-gray-100 dark:hover:bg-meta-4 transition-colors"
                 >
                   {isSubmitting ? (
                     <>

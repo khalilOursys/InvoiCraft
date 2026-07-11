@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Toast from "@radix-ui/react-toast";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useRouter } from "next/navigation";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Trash2, Package } from "lucide-react";
 
 type Product = {
   id: number;
@@ -75,6 +75,13 @@ export default function ProductsPage() {
     setDialogOpen(true);
   };
 
+  const handleViewCraftProducts = (product: Product) => {
+    // You can use product.id or any other identifier
+    router.push(`/craft-products/list/${product.id}`);
+    // Or if you want to navigate with a specific parameter:
+    // router.push(`/craft-products/list/1?productId=${product.id}`);
+  };
+
   const confirmDelete = async () => {
     if (!selectedProduct) return;
 
@@ -139,9 +146,16 @@ export default function ProductsPage() {
     {
       id: "actions",
       header: "Actions",
-      size: 120,
+      size: 150, // Increased size to accommodate new button
       Cell: ({ row }) => (
         <div className="flex gap-2">
+          <button
+            onClick={() => handleViewCraftProducts(row.original)}
+            className="p-1.5 text-purple-600 hover:bg-purple-50 rounded-md transition-colors"
+            title="Voir les produits artisanaux"
+          >
+            <Package className="w-5 h-5" />
+          </button>
           <button
             onClick={() => handleEdit(row.original)}
             className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md transition-colors"
