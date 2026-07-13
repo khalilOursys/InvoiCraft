@@ -158,7 +158,11 @@ export default function ListSaleInvoicePage() {
   };
 
   const handleEdit = (invoice: SaleInvoice) => {
-    router.push(`/sale-invoice/edit/${invoice.id}`);
+    console.log(invoice.type);
+    if (invoice.type === "SHIPPING_NOTE_INVOICE")
+      router.push(`/sale-invoice/update/SHIPPING_NOTE_INVOICE/${invoice.id}`);
+    else
+      router.push(`/sale-invoice/edit/${invoice.id}`);
   };
 
   const handleView = (invoice: SaleInvoice) => {

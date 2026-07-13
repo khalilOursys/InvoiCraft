@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import validator from "validator";
@@ -12,6 +12,7 @@ interface Product {
   name: string;
   salePrice: number;
   purchasePrice: number;
+  vat: number;
 }
 
 interface Client {
@@ -21,12 +22,23 @@ interface Client {
   phone?: string;
 }
 
+interface Service {
+  id: number;
+  name: string;
+  reference: string;
+  description?: string;
+  price: number;
+  isActive: boolean;
+}
+
 interface InvoiceItem {
   id?: number;
   productId: number;
   quantity: number;
   price: number;
   total: number;
+  totalTTC: number;
+  vatRate: number;
 }
 
 interface SaleInvoice {
@@ -42,9 +54,21 @@ interface SaleInvoice {
     productId: number;
     quantity: number;
     price: number;
+    vatRate?: number;
   }>;
   totalHT: number;
   totalTTC: number;
+  serviceIds?: number[];
+  serviceAmounts?: { [key: number]: number };
+  services?: Array<{
+    id: number;
+    saleInvoiceId: number;
+    serviceId: number;
+    amount: number;
+    createdAt?: string;
+    updatedAt?: string;
+    service: Service;
+  }>;
 }
 
 // API Functions
@@ -57,6 +81,12 @@ const fetchProducts = async (): Promise<Product[]> => {
 const fetchClients = async (): Promise<Client[]> => {
   const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}clients`);
   if (!response.ok) throw new Error("Failed to fetch clients");
+  return response.json();
+};
+
+const fetchServices = async (): Promise<Service[]> => {
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}services`);
+  if (!response.ok) throw new Error("Failed to fetch services");
   return response.json();
 };
 
@@ -109,6 +139,21 @@ const getTypeLabel = (typeValue: string) => {
   }
 };
 
+// TVA options
+const VAT_OPTIONS = [
+  { value: 0, label: "0%" },
+  { value: 7, label: "7%" },
+  { value: 10, label: "10%" },
+  { value: 13, label: "13%" },
+  { value: 19, label: "19%" },
+  { value: 20, label: "20%" },
+];
+
+// Helper function to round to 3 decimal places
+const roundTo3Decimals = (value: number): number => {
+  return Math.round(value * 1000) / 1000;
+};
+
 interface PageProps {
   params: Promise<{ id: string }>;
 }
@@ -136,6 +181,7 @@ export default function EditSaleInvoicePage({ params }: PageProps) {
 function EditSaleInvoiceContent({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const router = useRouter();
+  const dropdownRef = useRef<HTMLDivElement>(null);
 
   const [date, setDate] = useState("");
   const [invoiceItems, setInvoiceItems] = useState<InvoiceItem[]>([]);
@@ -149,6 +195,10 @@ function EditSaleInvoiceContent({ id }: { id: string }) {
   const [toastOpen, setToastOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
   const [toastType, setToastType] = useState<"success" | "error">("success");
+  const [showServiceDropdown, setShowServiceDropdown] = useState(false);
+
+  const [selectedServices, setSelectedServices] = useState<Service[]>([]);
+  const [initialServicesLoaded, setInitialServicesLoaded] = useState(false);
 
   const { data: products = [] } = useQuery({
     queryKey: ["products"],
@@ -160,28 +210,53 @@ function EditSaleInvoiceContent({ id }: { id: string }) {
     queryFn: fetchClients
   });
 
+  const { data: services = [] } = useQuery({
+    queryKey: ["services"],
+    queryFn: fetchServices
+  });
+
   const { data: invoice, isLoading: isLoadingInvoice } = useQuery({
     queryKey: ["saleInvoice", id],
     queryFn: () => fetchSaleInvoice(id),
     enabled: !!id,
   });
 
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setShowServiceDropdown(false);
+      }
+    };
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  const calculateServiceTotal = useCallback(() => {
+    return selectedServices.reduce((sum, service) => sum + service.price, 0);
+  }, [selectedServices]);
+
   const calculateTotals = useCallback(() => {
     let ht = invoiceItems.reduce(
       (total, item) => total + item.price * item.quantity,
       0,
     );
-    const ttc = ht * 1.19;
-    setTotalHT(ht);
-    setTotalTTC(ttc);
-  }, [invoiceItems]);
+    ht += calculateServiceTotal();
+
+    const ttc = invoiceItems.reduce(
+      (total, item) => total + item.totalTTC,
+      0
+    ) + (calculateServiceTotal() * 1.19);
+
+    setTotalHT(roundTo3Decimals(ht));
+    setTotalTTC(roundTo3Decimals(ttc));
+  }, [invoiceItems, calculateServiceTotal]);
 
   useEffect(() => {
     calculateTotals();
   }, [calculateTotals]);
 
   useEffect(() => {
-    if (invoice) {
+    if (invoice && services.length > 0 && products.length > 0 && !initialServicesLoaded) {
       setInvoiceNumber(invoice.invoiceNumber);
       setDate(invoice.date.split("T")[0]);
       setType(invoice.type);
@@ -194,16 +269,41 @@ function EditSaleInvoiceContent({ id }: { id: string }) {
       }
 
       setInvoiceItems(
-        invoice.items.map((item) => ({
-          id: item.id,
-          productId: item.productId,
-          quantity: item.quantity,
-          price: item.price,
-          total: item.price * item.quantity,
-        }))
+        invoice.items.map((item) => {
+          const product = products.find(p => p.id === item.productId);
+          const vatRate = item.vatRate || product?.vat || 19;
+          const price = roundTo3Decimals(item.price);
+          const total = roundTo3Decimals(price * item.quantity);
+          const totalTTC = roundTo3Decimals(price * item.quantity * (1 + vatRate / 100));
+
+          return {
+            id: item.id,
+            productId: item.productId,
+            quantity: item.quantity,
+            price: price,
+            total: total,
+            totalTTC: totalTTC,
+            vatRate: vatRate,
+          };
+        })
       );
+      console.log(invoice);
+
+      if (invoice.services && invoice.services.length > 0) {
+        // The backend returns services as array of { id, saleInvoiceId, serviceId, amount, service: {...} }
+        const loadedServices = invoice.services.map(s => s.service);
+        setSelectedServices(loadedServices);
+      } else if (invoice.serviceIds && invoice.serviceIds.length > 0) {
+        // Fallback for older format if serviceIds exists
+        const loadedServices = services.filter(s =>
+          invoice.serviceIds?.includes(s.id)
+        );
+        setSelectedServices(loadedServices);
+      }
+
+      setInitialServicesLoaded(true);
     }
-  }, [invoice]);
+  }, [invoice, services, products, initialServicesLoaded]);
 
   const showToast = (msg: string, type: "success" | "error" = "success") => {
     setToastMsg(msg);
@@ -232,10 +332,42 @@ function EditSaleInvoiceContent({ id }: { id: string }) {
 
         if (field === "productId") {
           const selectedProduct = products.find((p) => p.id === value);
-          updatedItem.price = selectedProduct ? selectedProduct.salePrice : 0;
+          updatedItem.price = selectedProduct ? roundTo3Decimals(selectedProduct.salePrice) : 0;
+          updatedItem.vatRate = selectedProduct?.vat || 19;
+          updatedItem.total = roundTo3Decimals(updatedItem.price * updatedItem.quantity);
+          updatedItem.totalTTC = roundTo3Decimals(
+            updatedItem.price * updatedItem.quantity * (1 + updatedItem.vatRate / 100)
+          );
+        } else if (field === "quantity") {
+          updatedItem.total = roundTo3Decimals(updatedItem.price * updatedItem.quantity);
+          updatedItem.totalTTC = roundTo3Decimals(
+            updatedItem.price * updatedItem.quantity * (1 + updatedItem.vatRate / 100)
+          );
+        } else if (field === "price") {
+          const price = typeof value === 'number' ? value : 0;
+          updatedItem.price = roundTo3Decimals(price);
+          updatedItem.total = roundTo3Decimals(updatedItem.price * updatedItem.quantity);
+          updatedItem.totalTTC = roundTo3Decimals(
+            updatedItem.price * updatedItem.quantity * (1 + updatedItem.vatRate / 100)
+          );
+        } else if (field === "totalTTC") {
+          const newTotalTTC = typeof value === 'number' ? value : 0;
+          updatedItem.totalTTC = roundTo3Decimals(newTotalTTC);
+          if (updatedItem.quantity > 0) {
+            // Calculate price from totalTTC using the VAT rate
+            updatedItem.price = roundTo3Decimals(newTotalTTC / (updatedItem.quantity * (1 + updatedItem.vatRate / 100)));
+            updatedItem.total = roundTo3Decimals(updatedItem.price * updatedItem.quantity);
+          }
+        } else if (field === "vatRate") {
+          const vatRate = typeof value === 'number' ? value : 19;
+          updatedItem.vatRate = vatRate;
+          // Recalculate totalTTC with new VAT rate
+          updatedItem.totalTTC = roundTo3Decimals(
+            updatedItem.price * updatedItem.quantity * (1 + vatRate / 100)
+          );
         }
+        console.log(updatedItem);
 
-        updatedItem.total = updatedItem.price * updatedItem.quantity;
         return updatedItem;
       }
       return item;
@@ -246,13 +378,35 @@ function EditSaleInvoiceContent({ id }: { id: string }) {
   const handleAddItem = () => {
     setInvoiceItems([
       ...invoiceItems,
-      { productId: 0, quantity: 1, price: 0, total: 0 },
+      { productId: 0, quantity: 1, price: 0, total: 0, totalTTC: 0, vatRate: 19 },
     ]);
   };
 
   const handleRemoveItem = (index: number) => {
     const newItems = invoiceItems.filter((_, i) => i !== index);
     setInvoiceItems(newItems);
+  };
+
+  const handleAddService = (service: Service) => {
+    if (!selectedServices.find(s => s.id === service.id)) {
+      setSelectedServices([...selectedServices, service]);
+      setShowServiceDropdown(false);
+      showToast(`✅ Service "${service.name}" ajouté`, "success");
+    } else {
+      showToast(`⚠️ Service déjà sélectionné`, "error");
+    }
+  };
+
+  const handleRemoveService = (serviceId: number) => {
+    const service = selectedServices.find(s => s.id === serviceId);
+    setSelectedServices(selectedServices.filter(s => s.id !== serviceId));
+    if (service) {
+      showToast(`🗑️ Service "${service.name}" supprimé`, "success");
+    }
+  };
+
+  const handleToggleDropdown = () => {
+    setShowServiceDropdown(!showServiceDropdown);
   };
 
   const redirectToTypeList = () => {
@@ -295,8 +449,14 @@ function EditSaleInvoiceContent({ id }: { id: string }) {
     const items = invoiceItems.map((item) => ({
       productId: item.productId,
       quantity: item.quantity,
-      price: item.price,
+      price: roundTo3Decimals(item.price),
+      vatRate: item.vatRate,
     }));
+
+    const serviceAmounts: { [key: number]: number } = {};
+    selectedServices.forEach(service => {
+      serviceAmounts[service.id] = service.price;
+    });
 
     const invoiceData = {
       invoiceNumber,
@@ -305,14 +465,20 @@ function EditSaleInvoiceContent({ id }: { id: string }) {
       status,
       clientId,
       items,
-      totalHT,
-      totalTTC,
+      totalHT: roundTo3Decimals(totalHT),
+      totalTTC: roundTo3Decimals(totalTTC),
+      serviceIds: selectedServices.map(s => s.id),
+      serviceAmounts: serviceAmounts,
     };
 
     updateMutation.mutate({ id, data: invoiceData });
   };
 
   const handleCancel = () => redirectToTypeList();
+
+  const availableServices = services.filter(
+    s => !selectedServices.find(selected => selected.id === s.id)
+  );
 
   if (isLoadingInvoice) {
     return (
@@ -421,7 +587,6 @@ function EditSaleInvoiceContent({ id }: { id: string }) {
                 </div>
               </div>
 
-              {/* Articles Table - same as add component */}
               <div className="mt-6">
                 <button
                   type="button"
@@ -439,9 +604,11 @@ function EditSaleInvoiceContent({ id }: { id: string }) {
                     <thead>
                       <tr className="bg-gray-100 dark:bg-gray-800">
                         <th className="border-b p-4 text-left">Produit</th>
-                        <th className="border-b p-4 text-left">Quantité</th>
-                        <th className="border-b p-4 text-left">Prix unitaire (€)</th>
-                        <th className="border-b p-4 text-left">Total (€)</th>
+                        <th className="border-b p-4 text-left">Qté</th>
+                        <th className="border-b p-4 text-left">Prix unitaire (TND)</th>
+                        <th className="border-b p-4 text-left">TVA</th>
+                        <th className="border-b p-4 text-left">Total HT (TND)</th>
+                        <th className="border-b p-4 text-left">Total TTC (TND)</th>
                         <th className="border-b p-4 text-left">Action</th>
                       </tr>
                     </thead>
@@ -482,7 +649,7 @@ function EditSaleInvoiceContent({ id }: { id: string }) {
                           <td className="p-4">
                             <input
                               type="number"
-                              step="0.01"
+                              step="0.001"
                               value={item.price}
                               onChange={(e) =>
                                 handleItemChange(
@@ -494,7 +661,37 @@ function EditSaleInvoiceContent({ id }: { id: string }) {
                               className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-3 py-2 outline-none transition focus:border-primary dark:border-form-strokedark dark:bg-form-input"
                             />
                           </td>
-                          <td className="p-4">{item.total.toFixed(2)}</td>
+                          <td className="p-4">
+                            <select
+                              value={item.vatRate}
+                              onChange={(e) =>
+                                handleItemChange(index, "vatRate", Number(e.target.value))
+                              }
+                              className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-3 py-2 outline-none transition focus:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                            >
+                              {VAT_OPTIONS.map((option) => (
+                                <option key={option.value} value={option.value}>
+                                  {option.label}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                          <td className="p-4">{item.total.toFixed(3)}</td>
+                          <td className="p-4">
+                            <input
+                              type="number"
+                              step="0.001"
+                              value={item.totalTTC}
+                              onChange={(e) =>
+                                handleItemChange(
+                                  index,
+                                  "totalTTC",
+                                  parseFloat(e.target.value) || 0
+                                )
+                              }
+                              className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-3 py-2 outline-none transition focus:border-primary dark:border-form-strokedark dark:bg-form-input"
+                            />
+                          </td>
                           <td className="p-4">
                             <button
                               type="button"
@@ -513,44 +710,116 @@ function EditSaleInvoiceContent({ id }: { id: string }) {
                 </div>
               </div>
 
-              {/* Totals - same as add component */}
+              <div className="mt-6">
+                <label className="mb-3 block text-sm font-medium text-black dark:text-white">
+                  Services <span className="text-xs text-gray-500">(optionnel)</span>
+                </label>
+                <div className="min-h-[42px] rounded-lg border-[1.5px] border-stroke bg-transparent px-3 py-2 dark:border-form-strokedark dark:bg-form-input">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {selectedServices.map((service) => (
+                      <span
+                        key={service.id}
+                        className="inline-flex items-center gap-1 rounded-full bg-blue-100 px-3 py-1 text-sm font-medium text-blue-800 dark:bg-blue-900/30 dark:text-blue-200"
+                      >
+                        {service.name}
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveService(service.id)}
+                          className="ml-1 text-blue-600 hover:text-red-600 dark:text-blue-400 dark:hover:text-red-400"
+                        >
+                          ×
+                        </button>
+                      </span>
+                    ))}
+
+                    <div className="relative" ref={dropdownRef}>
+                      <button
+                        type="button"
+                        onClick={handleToggleDropdown}
+                        className="text-sm text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-300"
+                      >
+                        + Ajouter un service
+                      </button>
+
+                      {showServiceDropdown && (
+                        <div className="absolute left-0 top-full z-50 mt-1 max-h-60 w-64 overflow-y-auto rounded-lg border border-stroke bg-white shadow-lg dark:border-strokedark dark:bg-boxdark">
+                          {availableServices.length === 0 ? (
+                            <div className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+                              Tous les services sont sélectionnés
+                            </div>
+                          ) : (
+                            availableServices.map((service) => (
+                              <button
+                                key={service.id}
+                                type="button"
+                                onClick={() => handleAddService(service)}
+                                className="flex w-full items-center justify-between px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-meta-4"
+                              >
+                                <span>{service.name}</span>
+                                <span className="text-xs text-gray-500 dark:text-gray-400">
+                                  {service.price.toFixed(3)} TND
+                                </span>
+                              </button>
+                            ))
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <small className="text-muted mt-1 block text-sm">
+                  Sélectionnez les services à ajouter à la facture
+                </small>
+
+                {selectedServices.length > 0 && (
+                  <div className="mt-2 bg-gray-50 dark:bg-meta-4 rounded-lg p-3">
+                    <div className="flex justify-between text-sm">
+                      <span className="font-medium">Total services:</span>
+                      <span className="font-bold text-primary">
+                        {calculateServiceTotal().toFixed(3)} TND
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-3">
                 <div>
                   <label className="mb-3 block text-sm font-medium text-black dark:text-white">
-                    Total HT (€)
+                    Total HT (TND)
                   </label>
                   <input
                     type="text"
-                    value={totalHT.toFixed(2)}
+                    value={totalHT.toFixed(3)}
                     readOnly
                     className="w-full rounded-lg border-[1.5px] border-stroke bg-gray-100 px-5 py-3 outline-none dark:border-form-strokedark dark:bg-form-input dark:text-white"
                   />
                 </div>
                 <div>
                   <label className="mb-3 block text-sm font-medium text-black dark:text-white">
-                    TVA (19%) (€)
+                    TVA (TND)
                   </label>
                   <input
                     type="text"
-                    value={(totalTTC - totalHT).toFixed(2)}
+                    value={(totalTTC - totalHT).toFixed(3)}
                     readOnly
                     className="w-full rounded-lg border-[1.5px] border-stroke bg-gray-100 px-5 py-3 outline-none dark:border-form-strokedark dark:bg-form-input dark:text-white"
                   />
                 </div>
                 <div>
                   <label className="mb-3 block text-sm font-medium text-black dark:text-white">
-                    Total TTC (€)
+                    Total TTC (TND)
                   </label>
                   <input
                     type="text"
-                    value={totalTTC.toFixed(2)}
+                    value={totalTTC.toFixed(3)}
                     readOnly
                     className="w-full rounded-lg border-[1.5px] border-stroke bg-gray-100 px-5 py-3 outline-none dark:border-form-strokedark dark:bg-form-input dark:text-white"
                   />
                 </div>
               </div>
 
-              {/* Buttons */}
               <div className="mt-6 flex gap-4">
                 <button
                   type="button"
@@ -562,7 +831,7 @@ function EditSaleInvoiceContent({ id }: { id: string }) {
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="rounded-md border border-stroke px-6 py-3 font-medium hover:bg-gray-100 dark:hover:bg-meta-4 transition-colors"
+                  className="rounded-md bg-primary px-6 py-3 font-medium text-white hover:bg-primary/90 transition-colors disabled:opacity-70"
                 >
                   {isSubmitting ? (
                     <>
