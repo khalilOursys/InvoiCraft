@@ -11,6 +11,7 @@ import { UpdateStatusDto } from './dto/update-status.dto';
 import { InvoiceStatus, SaleInvoiceType, Prisma } from '@prisma/client';
 import { CreateSaleInvoiceDto } from './dto/create-sale-invoice.dto';
 import { UpdateSaleInvoiceDto } from './dto/update-sale-invoice.dto';
+
 type PaymentStatus = 'PAID' | 'PARTIAL' | 'UNPAID';
 
 @Injectable()
@@ -27,6 +28,8 @@ export class SaleInvoiceService {
       cityIds,
       shippingNoteId,
       deliveryNoteIds,
+      serviceIds,
+      serviceAmounts,
       ...invoiceData
     } = createSaleInvoiceDto;
 
@@ -92,23 +95,6 @@ export class SaleInvoiceService {
           'Client ID does not match the client of the selected delivery notes',
         );
       }
-
-      // Validate that no delivery note is already consolidated
-      //Delete this comment if the customer requests this condition.
-      /* for (const dn of deliveryNotes) {
-        const existingConsolidation =
-          await this.prisma.deliveryNoteConsolidation.findFirst({
-            where: {
-              sourceDeliveryNoteId: dn.id,
-            },
-          });
-
-        if (existingConsolidation) {
-          throw new BadRequestException(
-            `Delivery note ${dn.invoiceNumber} is already consolidated into another invoice`,
-          );
-        }
-      } */
     }
 
     // Start a transaction
@@ -198,18 +184,41 @@ export class SaleInvoiceService {
         }
       }
 
+      // NEW: Validate services if provided
+      if (serviceIds && serviceIds.length > 0) {
+        const services = await prisma.service.findMany({
+          where: {
+            id: {
+              in: serviceIds,
+            },
+          },
+        });
+
+        if (services.length !== serviceIds.length) {
+          const foundServiceIds = services.map((s) => s.id);
+          const missingServiceIds = serviceIds.filter(
+            (id) => !foundServiceIds.includes(id),
+          );
+          throw new NotFoundException(
+            `Services with IDs ${missingServiceIds.join(', ')} not found`,
+          );
+        }
+
+        // Validate that all services are active
+        const inactiveServices = services.filter((s) => !s.isActive);
+        if (inactiveServices.length > 0) {
+          throw new BadRequestException(
+            `Services with IDs ${inactiveServices.map((s) => s.id).join(', ')} are not active`,
+          );
+        }
+      }
+
       // Check if invoice number already exists
       const existingInvoice = await prisma.saleInvoice.findFirst({
         where: { invoiceNumber: invoiceData.invoiceNumber },
       });
 
-      //remove this comment after meet with custumer
-      /* if (existingInvoice) {
-        throw new BadRequestException('Invoice number already exists');
-      } */
-
-      // Check if all products exist and have sufficient stock if status is VALIDATED
-      //Delete this comment if the customer requests this condition.
+      // Check if all products exist
       for (const item of items) {
         const product = await prisma.product.findFirst({
           where: { id: item.productId },
@@ -220,16 +229,6 @@ export class SaleInvoiceService {
             `Product with ID ${item.productId} not found`,
           );
         }
-
-        // Check stock if invoice is being created as VALIDATED
-        //Delete this comment if the customer requests this condition.
-        /* if (invoiceData.status === InvoiceStatus.VALIDATED) {
-          if (product.stock < item.quantity) {
-            throw new BadRequestException(
-              `Insufficient stock for product ${product.name}. Available: ${product.stock}, Requested: ${item.quantity}`,
-            );
-          }
-        } */
       }
 
       // Calculate VAT and totals
@@ -251,6 +250,33 @@ export class SaleInvoiceService {
         };
       });
 
+      // NEW: Add services total to HT and TTC
+      if (serviceIds && serviceIds.length > 0) {
+        const servicesData = await prisma.service.findMany({
+          where: {
+            id: {
+              in: serviceIds,
+            },
+          },
+        });
+
+        let servicesTotalHT = 0;
+        let servicesTotalTTC = 0;
+
+        for (const service of servicesData) {
+          const amount = serviceAmounts?.[service.id] ?? service.price;
+          const vatRate = 19; // Default VAT rate for services
+          const serviceTotalHT = amount;
+          const serviceTotalTTC = amount * (1 + vatRate / 100);
+
+          servicesTotalHT += serviceTotalHT;
+          servicesTotalTTC += serviceTotalTTC;
+        }
+
+        totalHT += servicesTotalHT;
+        totalTTC += servicesTotalTTC;
+      }
+
       // Add tax stamp to total TTC if applicable
       const taxStamp = invoiceData.taxStamp || 0;
       totalTTC += taxStamp;
@@ -259,7 +285,7 @@ export class SaleInvoiceService {
       totalHT = createSaleInvoiceDto.totalHT || totalHT;
       totalTTC = createSaleInvoiceDto.totalTTC || totalTTC;
 
-      // Create invoice with items and cities
+      // Create invoice with items, cities, and services
       const invoice = await prisma.saleInvoice.create({
         data: {
           ...invoiceData,
@@ -290,6 +316,16 @@ export class SaleInvoiceService {
               cities: {
                 create: cityIds.map((cityId) => ({
                   cityId,
+                })),
+              },
+            }),
+          // NEW: Add services if provided
+          ...(serviceIds &&
+            serviceIds.length > 0 && {
+              services: {
+                create: serviceIds.map((serviceId) => ({
+                  serviceId,
+                  amount: serviceAmounts?.[serviceId] ?? null,
                 })),
               },
             }),
@@ -334,6 +370,12 @@ export class SaleInvoiceService {
               },
             },
           },
+          // NEW: Include services
+          services: {
+            include: {
+              service: true,
+            },
+          },
         },
       });
 
@@ -351,44 +393,7 @@ export class SaleInvoiceService {
         });
       }
 
-      // Update product stock and shipping note items only if status is VALIDATED
-      /* if (invoice.status === InvoiceStatus.VALIDATED) {
-        // Update product stock for sale invoices
-        if (
-          invoice.type === SaleInvoiceType.SALE_INVOICE ||
-          invoice.type === SaleInvoiceType.DELIVERY_NOTE ||
-          invoice.type === SaleInvoiceType.SHIPPING_NOTE_INVOICE
-        ) {
-          for (const item of calculatedItems) {
-            await prisma.product.update({
-              where: { id: item.productId },
-              data: {
-                stock: {
-                  decrement: item.quantity,
-                },
-              },
-            });
-          }
-        }
-
-        // Update shipping note items quantity if this is a delivery note
-        if (shippingNoteId && invoice.type === SaleInvoiceType.DELIVERY_NOTE) {
-          for (const item of calculatedItems) {
-            if (item.shippingNoteItemId) {
-              // Decrement the quantity in the shipping note item
-              await prisma.saleInvoiceItem.update({
-                where: { id: item.shippingNoteItemId },
-                data: {
-                  quantity: {
-                    decrement: item.quantity,
-                  },
-                },
-              });
-            }
-          }
-        }
-      } */
-      // Update product stock and shipping note items only if status is VALIDATED
+      // Update product stock only if status is VALIDATED and not consolidating delivery notes
       if (invoice.status === InvoiceStatus.VALIDATED) {
         // Update product stock for sale invoices
         if (
@@ -403,7 +408,6 @@ export class SaleInvoiceService {
             deliveryNoteIds.length > 0
           ) {
             // Skip stock decrement for SALE_INVOICE when consolidating delivery notes
-            // because stock was already decremented when the delivery notes were created
             console.log(
               'Skipping stock decrement for consolidated SALE_INVOICE',
             );
@@ -426,7 +430,6 @@ export class SaleInvoiceService {
         if (shippingNoteId && invoice.type === SaleInvoiceType.DELIVERY_NOTE) {
           for (const item of calculatedItems) {
             if (item.shippingNoteItemId) {
-              // Decrement the quantity in the shipping note item
               await prisma.saleInvoiceItem.update({
                 where: { id: item.shippingNoteItemId },
                 data: {
@@ -513,7 +516,7 @@ export class SaleInvoiceService {
         where.driverId = filterDto.driverId;
       }
 
-      // Driver filter by CIN - NEW
+      // Driver filter by CIN
       if (filterDto.driverCIN) {
         where.driver = {
           cin: {
@@ -655,6 +658,12 @@ export class SaleInvoiceService {
             },
           },
         },
+        // NEW: Include services
+        services: {
+          include: {
+            service: true,
+          },
+        },
       },
       orderBy: {
         createdAt: 'desc',
@@ -733,7 +742,6 @@ export class SaleInvoiceService {
             },
           },
         },
-        // NEW: Include consolidated delivery notes
         consolidatedDeliveryNotes: {
           include: {
             sourceDeliveryNote: {
@@ -747,6 +755,12 @@ export class SaleInvoiceService {
                 },
               },
             },
+          },
+        },
+        // NEW: Include services
+        services: {
+          include: {
+            service: true,
           },
         },
       },
@@ -788,10 +802,15 @@ export class SaleInvoiceService {
         payments: true,
         shippingNote: true,
         deliveryNotes: true,
-        // NEW: Include consolidated delivery notes
         consolidatedDeliveryNotes: {
           include: {
             sourceDeliveryNote: true,
+          },
+        },
+        // NEW: Include services
+        services: {
+          include: {
+            service: true,
           },
         },
       },
@@ -837,10 +856,15 @@ export class SaleInvoiceService {
         },
         shippingNote: true,
         deliveryNotes: true,
-        // NEW: Include consolidated delivery notes
         consolidatedDeliveryNotes: {
           include: {
             sourceDeliveryNote: true,
+          },
+        },
+        // NEW: Include services
+        services: {
+          include: {
+            service: true,
           },
         },
       },
@@ -881,10 +905,15 @@ export class SaleInvoiceService {
         },
         shippingNote: true,
         deliveryNotes: true,
-        // NEW: Include consolidated delivery notes
         consolidatedDeliveryNotes: {
           include: {
             sourceDeliveryNote: true,
+          },
+        },
+        // NEW: Include services
+        services: {
+          include: {
+            service: true,
           },
         },
       },
@@ -906,7 +935,9 @@ export class SaleInvoiceService {
       endDate,
       cityIds,
       shippingNoteId,
-      deliveryNoteIds, // NEW: Array of delivery note IDs to consolidate
+      deliveryNoteIds,
+      serviceIds,
+      serviceAmounts,
       ...updateData
     } = updateSaleInvoiceDto;
 
@@ -983,8 +1014,8 @@ export class SaleInvoiceService {
                 where: {
                   shippingNoteId: shippingNoteId,
                   type: SaleInvoiceType.DELIVERY_NOTE,
-                  id: { not: id }, // Exclude current invoice
-                  status: InvoiceStatus.VALIDATED, // Only consider VALIDATED delivery notes
+                  id: { not: id },
+                  status: InvoiceStatus.VALIDATED,
                 },
                 include: { items: true },
               });
@@ -1012,7 +1043,7 @@ export class SaleInvoiceService {
         }
       }
 
-      // NEW: Validate deliveryNoteIds for SALE_INVOICE type
+      // Validate deliveryNoteIds for SALE_INVOICE type
       if (
         deliveryNoteIds !== undefined &&
         existingInvoice.type === SaleInvoiceType.SALE_INVOICE
@@ -1049,24 +1080,6 @@ export class SaleInvoiceService {
               'All delivery notes must belong to the same client when consolidating into one invoice',
             );
           }
-
-          // Validate that no delivery note is already consolidated (except by this invoice)
-          //Delete this comment if the customer requests this condition.
-          /* for (const dn of deliveryNotes) {
-            const existingConsolidation =
-              await prisma.deliveryNoteConsolidation.findFirst({
-                where: {
-                  sourceDeliveryNoteId: dn.id,
-                  consolidatedSaleInvoiceId: { not: id },
-                },
-              });
-
-            if (existingConsolidation) {
-              throw new BadRequestException(
-                `Delivery note ${dn.invoiceNumber} is already consolidated into another invoice`,
-              );
-            }
-          } */
         }
       }
 
@@ -1091,6 +1104,37 @@ export class SaleInvoiceService {
         }
       }
 
+      // NEW: Validate services if provided
+      if (serviceIds !== undefined) {
+        if (serviceIds.length > 0) {
+          const services = await prisma.service.findMany({
+            where: {
+              id: {
+                in: serviceIds,
+              },
+            },
+          });
+
+          if (services.length !== serviceIds.length) {
+            const foundServiceIds = services.map((s) => s.id);
+            const missingServiceIds = serviceIds.filter(
+              (id) => !foundServiceIds.includes(id),
+            );
+            throw new NotFoundException(
+              `Services with IDs ${missingServiceIds.join(', ')} not found`,
+            );
+          }
+
+          // Validate that all services are active
+          const inactiveServices = services.filter((s) => !s.isActive);
+          if (inactiveServices.length > 0) {
+            throw new BadRequestException(
+              `Services with IDs ${inactiveServices.map((s) => s.id).join(', ')} are not active`,
+            );
+          }
+        }
+      }
+
       // If invoice number is being updated, check if it's unique
       if (
         updateData.invoiceNumber &&
@@ -1099,16 +1143,11 @@ export class SaleInvoiceService {
         const invoiceWithSameNumber = await prisma.saleInvoice.findFirst({
           where: { invoiceNumber: updateData.invoiceNumber },
         });
-
-        //remove this comment after meet with custumer
-        /* if (invoiceWithSameNumber) {
-        throw new BadRequestException('Invoice number already exists');
-      } */
       }
 
       // Handle items update if provided
       if (items && items.length > 0) {
-        // Check if all products exist and have sufficient stock if invoice is or will be VALIDATED
+        // Check if all products exist
         for (const item of items) {
           if (item.productId) {
             const product = await prisma.product.findUnique({
@@ -1157,98 +1196,79 @@ export class SaleInvoiceService {
         });
 
         // Calculate new totals
-        const newTotalHT = calculatedItems.reduce(
+        let newTotalHT = calculatedItems.reduce(
           (sum, item) => sum + item.price * item.quantity,
           0,
         );
-        const newTotalTTC =
+        let newTotalTTC =
           calculatedItems.reduce(
             (sum, item) =>
               sum + item.price * item.quantity * (1 + item.vatRate / 100),
             0,
           ) + (updateData.taxStamp || existingInvoice.taxStamp || 0);
 
+        // NEW: Add services total to HT and TTC if serviceIds provided
+        if (serviceIds !== undefined && serviceIds.length > 0) {
+          const servicesData = await prisma.service.findMany({
+            where: {
+              id: {
+                in: serviceIds,
+              },
+            },
+          });
+
+          let servicesTotalHT = 0;
+          let servicesTotalTTC = 0;
+
+          for (const service of servicesData) {
+            const amount = serviceAmounts?.[service.id] ?? service.price;
+            const vatRate = 19; // Default VAT rate for services
+            const serviceTotalHT = amount;
+            const serviceTotalTTC = amount * (1 + vatRate / 100);
+
+            servicesTotalHT += serviceTotalHT;
+            servicesTotalTTC += serviceTotalTTC;
+          }
+
+          newTotalHT += servicesTotalHT;
+          newTotalTTC += servicesTotalTTC;
+        } else if (serviceIds !== undefined && serviceIds.length === 0) {
+          // No services selected, remove service totals
+          // (They are already excluded from the calculation above)
+        } else {
+          // serviceIds not provided, keep existing services
+          // Calculate existing service totals
+          const existingServices = await prisma.service.findMany({
+            where: {
+              id: {
+                in: existingInvoice.services?.map((s) => s.serviceId) || [],
+              },
+            },
+          });
+
+          let existingServicesTotalHT = 0;
+          let existingServicesTotalTTC = 0;
+
+          for (const service of existingServices) {
+            const existingService = existingInvoice.services?.find(
+              (s) => s.serviceId === service.id,
+            );
+            const amount = existingService?.amount ?? service.price;
+            const vatRate = 19;
+            const serviceTotalHT = amount;
+            const serviceTotalTTC = amount * (1 + vatRate / 100);
+
+            existingServicesTotalHT += serviceTotalHT;
+            existingServicesTotalTTC += serviceTotalTTC;
+          }
+
+          newTotalHT += existingServicesTotalHT;
+          newTotalTTC += existingServicesTotalTTC;
+        }
+
         updateData.totalHT = newTotalHT;
         updateData.totalTTC = newTotalTTC;
 
-        // Handle stock updates if invoice is or will be VALIDATED
-        /* if (isOrWillBeValidated) {
-          // If invoice was already VALIDATED, restore old stock first
-          if (existingInvoice.status === InvoiceStatus.VALIDATED) {
-            console.log('Restoring old stock for previously VALIDATED invoice');
-
-            // Restore old stock
-            for (const oldItem of existingInvoice.items) {
-              await prisma.product.update({
-                where: { id: oldItem.productId },
-                data: {
-                  stock: {
-                    increment: oldItem.quantity,
-                  },
-                },
-              });
-            }
-
-            // Restore old shipping note item quantities if this is a delivery note
-            if (
-              existingInvoice.shippingNoteId &&
-              existingInvoice.type === SaleInvoiceType.DELIVERY_NOTE
-            ) {
-              for (const oldItem of existingInvoice.items) {
-                if (oldItem.shippingNoteItemId) {
-                  await prisma.saleInvoiceItem.update({
-                    where: { id: oldItem.shippingNoteItemId },
-                    data: {
-                      quantity: {
-                        increment: oldItem.quantity,
-                      },
-                    },
-                  });
-                }
-              }
-            }
-          }
-
-          console.log('Decrementing stock for new items');
-
-          // Decrement new stock
-          for (const newItem of calculatedItems) {
-            await prisma.product.update({
-              where: { id: newItem.productId },
-              data: {
-                stock: {
-                  decrement: newItem.quantity,
-                },
-              },
-            });
-          }
-
-          // Handle shipping note item quantity updates if this is a delivery note
-          const targetShippingNoteId =
-            shippingNoteId || existingInvoice.shippingNoteId;
-          const invoiceType = updateData.type || existingInvoice.type;
-
-          if (
-            targetShippingNoteId &&
-            invoiceType === SaleInvoiceType.DELIVERY_NOTE
-          ) {
-            console.log('Updating shipping note item quantities');
-
-            // Decrement new shipping note item quantities
-            for (const newItem of calculatedItems) {
-              if (newItem.shippingNoteItemId) {
-                await prisma.saleInvoiceItem.update({
-                  where: { id: newItem.shippingNoteItemId },
-                  data: {
-                    quantity: {
-                      decrement: newItem.quantity,
-                    },
-                  },
-                });
-              }
-            }
-          }
-        } */
         // Handle stock updates if invoice is or will be VALIDATED
         if (isOrWillBeValidated) {
           // Check if this invoice has or will have consolidated delivery notes
@@ -1318,6 +1338,7 @@ export class SaleInvoiceService {
             }
           }
         }
+
         // Delete existing items and create new ones
         await prisma.saleInvoiceItem.deleteMany({
           where: { invoiceId: id },
@@ -1344,6 +1365,25 @@ export class SaleInvoiceService {
             data: cityIds.map((cityId) => ({
               saleInvoiceId: id,
               cityId,
+            })),
+          });
+        }
+      }
+
+      // NEW: Handle services update if provided
+      if (serviceIds !== undefined) {
+        // Delete existing service associations
+        await prisma.saleInvoiceService.deleteMany({
+          where: { saleInvoiceId: id },
+        });
+
+        // Create new service associations
+        if (serviceIds.length > 0) {
+          await prisma.saleInvoiceService.createMany({
+            data: serviceIds.map((serviceId) => ({
+              saleInvoiceId: id,
+              serviceId,
+              amount: serviceAmounts?.[serviceId] ?? null,
             })),
           });
         }
@@ -1444,10 +1484,15 @@ export class SaleInvoiceService {
             },
           },
           deliveryNotes: true,
-          // NEW: Include consolidated delivery notes
           consolidatedDeliveryNotes: {
             include: {
               sourceDeliveryNote: true,
+            },
+          },
+          // NEW: Include services
+          services: {
+            include: {
+              service: true,
             },
           },
         },
@@ -1478,13 +1523,6 @@ export class SaleInvoiceService {
               `Product with ID ${item.productId} not found`,
             );
           }
-
-          //Delete this comment if the customer requests this condition.
-          /* if (product.stock < item.quantity) {
-            throw new BadRequestException(
-              `Insufficient stock for product ${product.name}. Available: ${product.stock}, Required: ${item.quantity}`,
-            );
-          } */
         }
 
         // Check shipping note item availability if this is a delivery note
@@ -1567,10 +1605,15 @@ export class SaleInvoiceService {
           },
           shippingNote: true,
           deliveryNotes: true,
-          // NEW: Include consolidated delivery notes
           consolidatedDeliveryNotes: {
             include: {
               sourceDeliveryNote: true,
+            },
+          },
+          // NEW: Include services
+          services: {
+            include: {
+              service: true,
             },
           },
         },
@@ -1581,11 +1624,20 @@ export class SaleInvoiceService {
         updateStatusDto.status === InvoiceStatus.VALIDATED &&
         invoice.status !== InvoiceStatus.VALIDATED
       ) {
-        // Decrement product stock for sale invoices
+        // Check if this invoice has consolidated delivery notes
+        const hasConsolidatedDeliveryNotes =
+          invoice.consolidatedDeliveryNotes &&
+          invoice.consolidatedDeliveryNotes.length > 0;
+
+        // Decrement product stock for sale invoices (skip for consolidated SALE_INVOICE)
         if (
-          invoice.type === SaleInvoiceType.SALE_INVOICE ||
-          invoice.type === SaleInvoiceType.DELIVERY_NOTE ||
-          invoice.type === SaleInvoiceType.SHIPPING_NOTE_INVOICE
+          (invoice.type === SaleInvoiceType.SALE_INVOICE ||
+            invoice.type === SaleInvoiceType.DELIVERY_NOTE ||
+            invoice.type === SaleInvoiceType.SHIPPING_NOTE_INVOICE) &&
+          !(
+            invoice.type === SaleInvoiceType.SALE_INVOICE &&
+            hasConsolidatedDeliveryNotes
+          )
         ) {
           for (const item of invoice.items) {
             await prisma.product.update({
@@ -1624,11 +1676,20 @@ export class SaleInvoiceService {
         invoice.status === InvoiceStatus.VALIDATED &&
         updateStatusDto.status !== InvoiceStatus.VALIDATED
       ) {
-        // Restore product stock
+        // Check if this invoice has consolidated delivery notes
+        const hasConsolidatedDeliveryNotes =
+          invoice.consolidatedDeliveryNotes &&
+          invoice.consolidatedDeliveryNotes.length > 0;
+
+        // Restore product stock (skip for consolidated SALE_INVOICE)
         if (
-          invoice.type === SaleInvoiceType.SALE_INVOICE ||
-          invoice.type === SaleInvoiceType.DELIVERY_NOTE ||
-          invoice.type === SaleInvoiceType.SHIPPING_NOTE_INVOICE
+          (invoice.type === SaleInvoiceType.SALE_INVOICE ||
+            invoice.type === SaleInvoiceType.DELIVERY_NOTE ||
+            invoice.type === SaleInvoiceType.SHIPPING_NOTE_INVOICE) &&
+          !(
+            invoice.type === SaleInvoiceType.SALE_INVOICE &&
+            hasConsolidatedDeliveryNotes
+          )
         ) {
           for (const item of invoice.items) {
             await prisma.product.update({
@@ -1676,11 +1737,11 @@ export class SaleInvoiceService {
         InvoiceStatus.PAID,
         InvoiceStatus.CANCELLED,
         InvoiceStatus.DRAFT,
-        InvoiceStatus.CLOSED, // Add CLOSED as a valid transition from VALIDATED
+        InvoiceStatus.CLOSED,
       ],
       [InvoiceStatus.PAID]: [InvoiceStatus.CANCELLED],
       [InvoiceStatus.CANCELLED]: [InvoiceStatus.DRAFT],
-      [InvoiceStatus.CLOSED]: [], // CLOSED is a final state, no transitions from it
+      [InvoiceStatus.CLOSED]: [],
     };
 
     if (!validTransitions[currentStatus].includes(newStatus)) {
@@ -1694,52 +1755,18 @@ export class SaleInvoiceService {
     const invoice = await this.findOne(id);
 
     return this.prisma.$transaction(async (prisma) => {
-      // NEW: Delete delivery note consolidations first
+      // Delete delivery note consolidations first
       await prisma.deliveryNoteConsolidation.deleteMany({
         where: {
           OR: [{ consolidatedSaleInvoiceId: id }, { sourceDeliveryNoteId: id }],
         },
       });
 
-      // Only restore stock if the invoice was VALIDATED
-      /* if (invoice.status === InvoiceStatus.VALIDATED) {
-        // Restore shipping note item quantities if this is a delivery note
-        if (
-          invoice.shippingNoteId &&
-          invoice.type === SaleInvoiceType.DELIVERY_NOTE
-        ) {
-          for (const item of invoice.items) {
-            if (item.shippingNoteItemId) {
-              await prisma.saleInvoiceItem.update({
-                where: { id: item.shippingNoteItemId },
-                data: {
-                  quantity: {
-                    increment: item.quantity,
-                  },
-                },
-              });
-            }
-          }
-        }
+      // Delete service associations
+      await prisma.saleInvoiceService.deleteMany({
+        where: { saleInvoiceId: id },
+      });
 
-        // Restore product stock for sale invoices
-        if (
-          invoice.type === SaleInvoiceType.SALE_INVOICE ||
-          invoice.type === SaleInvoiceType.DELIVERY_NOTE ||
-          invoice.type === SaleInvoiceType.SHIPPING_NOTE_INVOICE
-        ) {
-          for (const item of invoice.items) {
-            await prisma.product.update({
-              where: { id: item.productId },
-              data: {
-                stock: {
-                  increment: item.quantity,
-                },
-              },
-            });
-          }
-        }
-      } */
       // Only restore stock if the invoice was VALIDATED
       if (invoice.status === InvoiceStatus.VALIDATED) {
         // For SALE_INVOICE type, only restore stock if it has no consolidated delivery notes
@@ -1950,6 +1977,12 @@ export class SaleInvoiceService {
             },
           },
         },
+        // NEW: Include services
+        services: {
+          include: {
+            service: true,
+          },
+        },
       },
     });
   }
@@ -2015,6 +2048,11 @@ export class SaleInvoiceService {
           include: {
             client: true,
             driver: true,
+            services: {
+              include: {
+                service: true,
+              },
+            },
           },
         },
         shippingNoteItem: {
@@ -2071,7 +2109,6 @@ export class SaleInvoiceService {
     return { message: 'Email sent', invoiceId: id, to: emailData.to };
   }
 
-  // NEW: Helper method to get available delivery notes for consolidation
   async getAvailableDeliveryNotesForConsolidation(clientId?: number) {
     const where: Prisma.SaleInvoiceWhereInput = {
       type: SaleInvoiceType.DELIVERY_NOTE,
@@ -2114,6 +2151,11 @@ export class SaleInvoiceService {
             product: true,
           },
         },
+        services: {
+          include: {
+            service: true,
+          },
+        },
       },
       orderBy: {
         date: 'desc',
@@ -2150,11 +2192,11 @@ export class SaleInvoiceService {
         driverId: driverId,
         type: SaleInvoiceType.DELIVERY_NOTE,
         status: {
-          in: [InvoiceStatus.VALIDATED, InvoiceStatus.PAID], // Only consider validated or paid invoices
+          in: [InvoiceStatus.VALIDATED, InvoiceStatus.PAID],
         },
       },
       include: {
-        payments: true, // Include payments to calculate total paid
+        payments: true,
         items: {
           include: {
             product: true,
@@ -2171,6 +2213,11 @@ export class SaleInvoiceService {
         driver: {
           include: {
             car: true,
+          },
+        },
+        services: {
+          include: {
+            service: true,
           },
         },
       },
@@ -2221,6 +2268,12 @@ export class SaleInvoiceService {
           totalHT: item.price * item.quantity,
           totalTTC: item.price * item.quantity * (1 + item.vatRate / 100),
         })),
+        services: invoice.services.map((service) => ({
+          id: service.id,
+          serviceId: service.serviceId,
+          serviceName: service.service.name,
+          amount: service.amount || service.service.price,
+        })),
         payments: invoice.payments.map((payment) => ({
           id: payment.id,
           amount: payment.amount,
@@ -2244,7 +2297,6 @@ export class SaleInvoiceService {
     };
   }
 
-  // Also add a more flexible version with optional parameters
   async getUnpaidDeliveryInvoices(clientId?: number, driverId?: number) {
     const where: Prisma.SaleInvoiceWhereInput = {
       type: SaleInvoiceType.DELIVERY_NOTE,
@@ -2281,6 +2333,11 @@ export class SaleInvoiceService {
         driver: {
           include: {
             car: true,
+          },
+        },
+        services: {
+          include: {
+            service: true,
           },
         },
       },
@@ -2322,79 +2379,6 @@ export class SaleInvoiceService {
     return unpaidInvoices;
   }
 
-  // Add this method to your SaleInvoiceService class
-  async generateInvoiceNumber0(type?: SaleInvoiceType) {
-    const currentYear = new Date().getFullYear();
-    const yearPrefix = currentYear.toString().slice(-2); // Get last 2 digits of year
-
-    // Add type prefix to differentiate invoice types
-    let typePrefix = '';
-    switch (type) {
-      case SaleInvoiceType.SALE_INVOICE:
-        typePrefix = 'S';
-        break;
-      case SaleInvoiceType.DELIVERY_NOTE:
-        typePrefix = 'D';
-        break;
-      case SaleInvoiceType.SHIPPING_NOTE_INVOICE:
-        typePrefix = 'SH';
-        break;
-      default:
-        typePrefix = 'I'; // Default prefix for unspecified type
-    }
-
-    // Construct the search pattern based on type
-    let searchPattern: string;
-    if (type) {
-      // With type prefix: e.g., "25S" for SALE_INVOICE, "25D" for DELIVERY_NOTE, "25SH" for SHIPPING_NOTE_INVOICE
-      searchPattern = `${yearPrefix}${typePrefix}`;
-    } else {
-      // Without type prefix (backward compatibility)
-      searchPattern = yearPrefix;
-    }
-
-    // Find the highest invoice number for the current year and type
-    const latestInvoice = await this.prisma.saleInvoice.findFirst({
-      where: {
-        invoiceNumber: {
-          startsWith: searchPattern,
-        },
-      },
-      orderBy: {
-        invoiceNumber: 'desc',
-      },
-    });
-
-    let nextNumber = 1;
-
-    if (latestInvoice && latestInvoice.invoiceNumber) {
-      // Extract the numeric part after the prefix
-      const prefixLength = type
-        ? type === SaleInvoiceType.SHIPPING_NOTE_INVOICE
-          ? 4
-          : 3
-        : 3;
-      const numericPart = latestInvoice.invoiceNumber.slice(prefixLength);
-      const currentNumber = parseInt(numericPart, 10);
-      if (!isNaN(currentNumber)) {
-        nextNumber = currentNumber + 1;
-      }
-    }
-
-    // Format: year prefix + type prefix + 5-digit number (padded with zeros)
-    const sequentialNumber = nextNumber.toString().padStart(5, '0');
-    let invoiceNumber: string;
-
-    if (type) {
-      invoiceNumber = `${yearPrefix}${typePrefix}${sequentialNumber}`;
-    } else {
-      // Backward compatibility
-      invoiceNumber = `${yearPrefix}${sequentialNumber}`;
-    }
-
-    return invoiceNumber;
-  }
-
   async generateInvoiceNumber(type: SaleInvoiceType) {
     const currentYear = new Date().getFullYear();
     const startOfYear = new Date(`${currentYear}-01-01T00:00:00.000Z`);
@@ -2431,17 +2415,10 @@ export class SaleInvoiceService {
     // Format as 4 digits with leading zeros like "0037"
     const formattedNumber = nextNumber.toString().padStart(4, '0');
     return formattedNumber;
-    /* return {
-      type: type,
-      nextInvoiceNumber: formattedNumber,
-    }; */
   }
 
   // ==================== PAYMENT CALCULATION METHODS ====================
 
-  /**
-   * Calculate payments for a single sale invoice
-   */
   async getInvoicePaymentDetails(invoiceId: number) {
     const invoice = await this.prisma.saleInvoice.findUnique({
       where: { id: invoiceId },
@@ -2451,6 +2428,11 @@ export class SaleInvoiceService {
         items: {
           include: {
             product: true,
+          },
+        },
+        services: {
+          include: {
+            service: true,
           },
         },
       },
@@ -2510,12 +2492,15 @@ export class SaleInvoiceService {
         vatRate: item.vatRate,
         vatAmount: item.vatAmount,
       })),
+      services: invoice.services.map((service) => ({
+        id: service.id,
+        serviceId: service.serviceId,
+        serviceName: service.service.name,
+        amount: service.amount || service.service.price,
+      })),
     };
   }
 
-  /**
-   * Get all sale invoices for a client with payment calculations
-   */
   async getClientInvoicesWithPayments(clientId: number) {
     const client = await this.prisma.client.findUnique({
       where: { id: clientId },
@@ -2532,6 +2517,11 @@ export class SaleInvoiceService {
         items: {
           include: {
             product: true,
+          },
+        },
+        services: {
+          include: {
+            service: true,
           },
         },
       },
@@ -2583,15 +2573,18 @@ export class SaleInvoiceService {
           vatAmount: item.vatAmount,
           total: item.quantity * item.price,
         })),
+        services: invoice.services.map((service) => ({
+          id: service.id,
+          serviceId: service.serviceId,
+          serviceName: service.service.name,
+          amount: service.amount || service.service.price,
+        })),
       };
     });
 
     return simplifiedInvoices;
   }
 
-  /**
-   * Get payment summary for all sale invoices
-   */
   async getAllSaleInvoicesPaymentSummary() {
     const invoices = await this.prisma.saleInvoice.findMany({
       include: {
@@ -2600,6 +2593,11 @@ export class SaleInvoiceService {
           select: {
             id: true,
             name: true,
+          },
+        },
+        services: {
+          include: {
+            service: true,
           },
         },
       },
@@ -2641,9 +2639,6 @@ export class SaleInvoiceService {
     });
   }
 
-  /**
-   * Get client balance
-   */
   async getClientBalance(clientId: number) {
     const client = await this.prisma.client.findUnique({
       where: { id: clientId },
@@ -2708,9 +2703,6 @@ export class SaleInvoiceService {
     };
   }
 
-  /**
-   * Get overdue sale invoices
-   */
   async getOverdueSaleInvoices(clientId?: number) {
     const where: Prisma.SaleInvoiceWhereInput = {
       status: {
@@ -2771,9 +2763,6 @@ export class SaleInvoiceService {
     };
   }
 
-  /**
-   * Bulk update payment status for sale invoices
-   */
   async updateBulkPaymentStatus(invoiceIds: number[]) {
     const results = [];
 
@@ -2811,21 +2800,7 @@ export class SaleInvoiceService {
   }
 
   // ==================== HELPER METHODS ====================
-  /* private getPaymentStatus(totalPaid: number, totalAmount: number): 'PAID' | 'PARTIAL' | 'UNPAID' {
-  if (totalAmount === 0) return 'PAID';
-  if (totalPaid >= totalAmount) return 'PAID';
-  if (totalPaid > 0) return 'PARTIAL';
-  return 'UNPAID';
-}
 
-private getPaymentStatusLabel(status: string): string {
-  const labels = {
-    PAID: '✅ Paid',
-    PARTIAL: '⏳ Partial Payment',
-    UNPAID: '❌ Unpaid',
-  };
-  return labels[status] || status;
-} */
   private getPaymentStatus(
     totalPaid: number,
     totalAmount: number,

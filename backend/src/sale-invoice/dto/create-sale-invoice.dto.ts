@@ -14,6 +14,7 @@ import {
   IsPositive,
   Max,
   ArrayMinSize,
+  IsObject,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { SaleInvoiceType, InvoiceStatus } from '@prisma/client';
@@ -84,7 +85,6 @@ export class CreateSaleInvoiceDto {
   @IsOptional()
   shippingNoteId?: number;
 
-  // NEW: Array of delivery note IDs to consolidate into this invoice
   @IsArray()
   @IsInt({ each: true })
   @IsOptional()
@@ -94,6 +94,16 @@ export class CreateSaleInvoiceDto {
   @IsInt({ each: true })
   @IsOptional()
   cityIds?: number[];
+
+  @IsArray()
+  @IsInt({ each: true })
+  @IsOptional()
+  serviceIds?: number[];
+
+  // NEW: Service amounts mapping (serviceId -> amount)
+  @IsObject()
+  @IsOptional()
+  serviceAmounts?: Record<number, number>;
 
   @IsArray()
   @ValidateNested({ each: true })

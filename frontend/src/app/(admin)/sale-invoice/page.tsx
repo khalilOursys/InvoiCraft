@@ -156,7 +156,11 @@ export default function ListSaleInvoicePage() {
   };
 
   const handleEdit = (invoice: SaleInvoice) => {
-    router.push(`/sale-invoice/edit/${invoice.id}`);
+    console.log(invoice.type);
+
+    /* if (invoice.type === "SHIPPING_NOTE_INVOICE")
+      router.push(`/sale-invoice/update/SHIPPING_NOTE_INVOICE/${invoice.id}`);
+    router.push(`/sale-invoice/edit/${invoice.id}`); */
   };
 
   const handleView = (invoice: SaleInvoice) => {
@@ -384,8 +388,8 @@ export default function ListSaleInvoicePage() {
           open={toastOpen}
           onOpenChange={setToastOpen}
           className={`fixed top-20 right-4 w-80 rounded-md p-4 shadow-lg z-50 ${toastType === "success"
-              ? "bg-green-600 dark:bg-green-700 text-white"
-              : "bg-red-600 dark:bg-red-700 text-white"
+            ? "bg-green-600 dark:bg-green-700 text-white"
+            : "bg-red-600 dark:bg-red-700 text-white"
             }`}
           duration={3000}
         >

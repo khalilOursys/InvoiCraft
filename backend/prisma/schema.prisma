@@ -340,7 +340,8 @@ model Service {
   createdAt       DateTime                 @default(now())
   updatedAt       DateTime                 @updatedAt
   
-  craftServices   CraftProductService[]    // Junction table for craft products
+  craftServices   CraftProductService[]
+  saleInvoices  SaleInvoiceService[]
   
   @@map("services")
 }
@@ -448,13 +449,26 @@ model SaleInvoice {
   items         SaleInvoiceItem[]
   payments      Payment[]          @relation("SaleInvoicePayments")
   stockReservations StockReservation[]
+  services      SaleInvoiceService[]
 
   totalHT       Float              @default(0)
   totalTTC      Float              @default(0)
 
   createdAt     DateTime           @default(now())
 }
+model SaleInvoiceService {
+  id              Int       @id @default(autoincrement())
+  saleInvoiceId   Int
+  serviceId       Int
+  amount          Float?    // Optional: override the service price for this invoice
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
 
+  saleInvoice     SaleInvoice @relation(fields: [saleInvoiceId], references: [id], onDelete: Cascade)
+  service         Service     @relation(fields: [serviceId], references: [id])
+
+  @@unique([saleInvoiceId, serviceId])
+}
 model SaleInvoiceItem {
   id                   Int      @id @default(autoincrement())
   quantity             Int
