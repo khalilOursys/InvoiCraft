@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Toast from "@radix-ui/react-toast";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useRouter } from "next/navigation";
-import { HandCoins, Pencil, Trash2, Truck } from "lucide-react";
+import { HandCoins, History, Pencil, Trash2, Truck } from "lucide-react";
 
 type Client = {
   id: number;
@@ -82,6 +82,10 @@ export default function ClientsPage() {
     router.push(`/payments?type=sale&entityId=${client.id}`);
   };
 
+  const handlePaymentHistory = (client: Client) => {
+    router.push(`/payments-history?type=sale&entityId=${client.id}`);
+  };
+
   const handleDelete = async (client: Client) => {
     setSelectedClient(client);
     setDialogOpen(true);
@@ -136,14 +140,22 @@ export default function ClientsPage() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => handlePayment(row.original)}
-            className="p-1.5 text-gray-600 hover:bg-gray-50 rounded-md transition-colors"
-            title="Paiements"
+            className="p-1.5 text-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
+            title="Ajouter un paiement"
           >
             <HandCoins className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => handlePaymentHistory(row.original)}
+            className="p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-md transition-colors"
+            title="Historique des paiements"
+          >
+            <History className="w-5 h-5" />
           </button>
         </div>
       ),
     },
+
     {
       id: "actions",
       header: "Actions",

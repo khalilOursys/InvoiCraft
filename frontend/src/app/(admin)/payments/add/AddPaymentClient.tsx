@@ -13,13 +13,20 @@ interface AddPaymentClientProps {
 }
 
 const addPayment = async (paymentData: any) => {
+    // Check if we're sending FormData (for file upload)
+    const isFormData = paymentData instanceof FormData;
+
     const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}payments`, {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-        },
-        body: JSON.stringify(paymentData),
+        body: isFormData ? paymentData : JSON.stringify(paymentData),
+        // Don't set Content-Type for FormData - browser will set it with boundary
+        ...(isFormData ? {} : {
+            headers: {
+                "Content-Type": "application/json",
+            },
+        }),
     });
+
     if (!response.ok) {
         const error = await response.json();
         throw new Error(error.message || "Failed to create payment");

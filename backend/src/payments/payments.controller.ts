@@ -9,7 +9,10 @@ import {
   Body,
   ParseIntPipe,
   Query,
+  UseInterceptors,
+  UploadedFile,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
@@ -19,8 +22,12 @@ export class PaymentsController {
   constructor(private readonly paymentsService: PaymentsService) {}
 
   @Post()
-  async create(@Body() createPaymentDto: CreatePaymentDto) {
-    return await this.paymentsService.create(createPaymentDto);
+  @UseInterceptors(FileInterceptor('receiptFile'))
+  async create(
+    @Body() createPaymentDto: CreatePaymentDto,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    return await this.paymentsService.create(createPaymentDto, file);
   }
 
   @Get()
@@ -37,11 +44,13 @@ export class PaymentsController {
   }
 
   @Put(':id')
+  @UseInterceptors(FileInterceptor('receiptFile'))
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updatePaymentDto: UpdatePaymentDto,
+    @UploadedFile() file?: Express.Multer.File,
   ) {
-    return await this.paymentsService.update(id, updatePaymentDto);
+    return await this.paymentsService.update(id, updatePaymentDto, file);
   }
 
   @Delete(':id')

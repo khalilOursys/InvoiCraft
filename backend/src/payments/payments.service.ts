@@ -1,5 +1,4 @@
 // src/payments/payments.service.ts
-
 import {
   Injectable,
   NotFoundException,
@@ -9,36 +8,167 @@ import { PrismaService } from '../prisma.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { UpdatePaymentDto } from './dto/update-payment.dto';
 import { PaymentMethod, InvoiceStatus } from '@prisma/client';
+import * as fs from 'fs';
+import * as path from 'path';
 
 @Injectable()
 export class PaymentsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async create(createPaymentDto: CreatePaymentDto) {
+  private validatePaymentMethodFields(dto: CreatePaymentDto | any) {
+    // Validate CHECK method fields
+    if (dto.method === PaymentMethod.CHECK) {
+      if (!dto.checkDate) {
+        throw new BadRequestException('La date du chèque est requise.');
+      }
+      if (!dto.checkBank) {
+        throw new BadRequestException('La banque est requise.');
+      }
+      if (!dto.checkNumber) {
+        throw new BadRequestException('Le numéro de chèque est requis.');
+      }
+      // Clean up other method fields
+      dto.traitDate = undefined;
+      dto.traitNumber = undefined;
+    }
+
+    // Validate TRAIT method fields
+    if (dto.method === PaymentMethod.TRAIT) {
+      if (!dto.traitDate) {
+        throw new BadRequestException('La date du trait est requise.');
+      }
+      if (!dto.traitNumber) {
+        throw new BadRequestException('Le numéro du trait est requis.');
+      }
+      // Clean up other method fields
+      dto.checkDate = undefined;
+      dto.checkBank = undefined;
+      dto.checkNumber = undefined;
+    }
+
+    // Clean up method-specific fields for other methods
+    if (
+      dto.method !== PaymentMethod.CHECK &&
+      dto.method !== PaymentMethod.TRAIT
+    ) {
+      dto.checkDate = undefined;
+      dto.checkBank = undefined;
+      dto.checkNumber = undefined;
+      dto.traitDate = undefined;
+      dto.traitNumber = undefined;
+    }
+  }
+
+  private validateFile(file: any) {
+    if (!file) return null;
+
+    // Validate file size (max 5MB)
+    const maxSize = 5 * 1024 * 1024; // 5MB
+    if (file.size && file.size > maxSize) {
+      throw new BadRequestException(
+        'Le fichier est trop volumineux (max 5MB).',
+      );
+    }
+
+    // Validate file type
+    const allowedTypes = [
+      'image/jpeg',
+      'image/png',
+      'image/jpg',
+      'application/pdf',
+    ];
+    if (file.mimetype && !allowedTypes.includes(file.mimetype)) {
+      throw new BadRequestException(
+        'Format de fichier non supporté. Utilisez JPG, PNG ou PDF.',
+      );
+    }
+
+    return file;
+  }
+
+  private async saveFile(
+    file: any,
+  ): Promise<{ path: string | null; name: string | null }> {
+    if (!file) return { path: null, name: null };
+
+    // Validate file
+    this.validateFile(file);
+
+    // Create uploads directory if it doesn't exist
+    const uploadDir = './uploads/payments';
+    if (!fs.existsSync(uploadDir)) {
+      fs.mkdirSync(uploadDir, { recursive: true });
+    }
+
+    // Generate unique filename
+    const timestamp = Date.now();
+    const extension = path.extname(file.originalname || '');
+    const filename = `payment_${timestamp}_${Math.random().toString(36).substring(7)}${extension}`;
+    const filePath = path.join(uploadDir, filename);
+
+    // Save file
+    if (file.buffer) {
+      fs.writeFileSync(filePath, file.buffer);
+    } else if (file.path) {
+      fs.copyFileSync(file.path, filePath);
+    }
+
+    return {
+      path: `/uploads/payments/${filename}`,
+      name: file.originalname || filename,
+    };
+  }
+
+  private async deleteFile(filePath: string | null) {
+    if (!filePath) return;
+
+    try {
+      const fullPath = path.join(process.cwd(), filePath);
+      if (fs.existsSync(fullPath)) {
+        fs.unlinkSync(fullPath);
+      }
+    } catch (error) {
+      console.error('Error deleting file:', error);
+    }
+  }
+
+  async create(createPaymentDto: CreatePaymentDto, file?: any) {
+    // Validate payment method specific fields
+    this.validatePaymentMethodFields(createPaymentDto);
+
     // Validate that payment is linked to either purchase or sale, not both
     if (createPaymentDto.purchaseInvoiceId && createPaymentDto.saleInvoiceId) {
       throw new BadRequestException(
-        'Payment cannot be linked to both purchase and sale invoice simultaneously.',
+        "Le paiement ne peut pas être lié à une facture d'achat et une facture de vente simultanément.",
       );
     }
 
     // Validate that corresponding entity is provided
     if (createPaymentDto.purchaseInvoiceId && !createPaymentDto.supplierId) {
       throw new BadRequestException(
-        'Supplier ID is required for purchase invoice payments.',
+        "L'ID du fournisseur est requis pour les paiements de facture d'achat.",
       );
     }
 
     if (createPaymentDto.saleInvoiceId && !createPaymentDto.clientId) {
       throw new BadRequestException(
-        'Client ID is required for sale invoice payments.',
+        "L'ID du client est requis pour les paiements de facture de vente.",
       );
+    }
+
+    // Handle file upload
+    let fileData = { path: null, name: null } as {
+      path: string | null;
+      name: string | null;
+    };
+    if (file) {
+      fileData = await this.saveFile(file);
     }
 
     // Use transaction to ensure data consistency
     return await this.prisma.$transaction(async (prisma) => {
       let invoice;
-      let totalPaid: number = 0; // Initialize with default value
+      let totalPaid: number = 0;
       let invoiceType: 'purchase' | 'sale' | null = null;
 
       // Validate purchase invoice
@@ -51,17 +181,16 @@ export class PaymentsService {
 
         if (!invoice) {
           throw new NotFoundException(
-            `Purchase invoice with id ${createPaymentDto.purchaseInvoiceId} not found.`,
+            `Facture d'achat avec l'ID ${createPaymentDto.purchaseInvoiceId} non trouvée.`,
           );
         }
 
         if (invoice.supplierId !== createPaymentDto.supplierId) {
           throw new BadRequestException(
-            'Supplier does not match the purchase invoice supplier.',
+            "Le fournisseur ne correspond pas à la facture d'achat.",
           );
         }
 
-        // Calculate total paid for this invoice
         totalPaid = await this.getInvoiceTotalPaid(
           prisma,
           'purchase',
@@ -79,17 +208,16 @@ export class PaymentsService {
 
         if (!invoice) {
           throw new NotFoundException(
-            `Sale invoice with id ${createPaymentDto.saleInvoiceId} not found.`,
+            `Facture de vente avec l'ID ${createPaymentDto.saleInvoiceId} non trouvée.`,
           );
         }
 
         if (invoice.clientId !== createPaymentDto.clientId) {
           throw new BadRequestException(
-            'Client does not match the sale invoice client.',
+            'Le client ne correspond pas à la facture de vente.',
           );
         }
 
-        // Calculate total paid for this invoice
         totalPaid = await this.getInvoiceTotalPaid(
           prisma,
           'sale',
@@ -100,15 +228,33 @@ export class PaymentsService {
       // Validate payment amount doesn't exceed remaining balance
       if (invoice && totalPaid + createPaymentDto.amount > invoice.totalTTC) {
         throw new BadRequestException(
-          `Payment amount exceeds the remaining balance. Maximum allowed: ${invoice.totalTTC - totalPaid}`,
+          `Le montant du paiement dépasse le solde restant. Maximum autorisé: ${(invoice.totalTTC - totalPaid).toFixed(2)}`,
         );
       }
 
-      // Create the payment
+      // Create the payment with file data
       const payment = await prisma.payment.create({
         data: {
-          ...createPaymentDto,
-          createdAt: new Date(),
+          amount: createPaymentDto.amount,
+          method: createPaymentDto.method,
+          checkDate: createPaymentDto.checkDate
+            ? new Date(createPaymentDto.checkDate)
+            : undefined,
+          checkBank: createPaymentDto.checkBank,
+          checkNumber: createPaymentDto.checkNumber,
+          traitDate: createPaymentDto.traitDate
+            ? new Date(createPaymentDto.traitDate)
+            : undefined,
+          traitNumber: createPaymentDto.traitNumber,
+          receiptFile: fileData.path,
+          receiptFileName: fileData.name,
+          purchaseInvoiceId: createPaymentDto.purchaseInvoiceId,
+          supplierId: createPaymentDto.supplierId,
+          saleInvoiceId: createPaymentDto.saleInvoiceId,
+          clientId: createPaymentDto.clientId,
+          createdAt: createPaymentDto.createdAt
+            ? new Date(createPaymentDto.createdAt)
+            : new Date(),
         },
       });
 
@@ -139,20 +285,42 @@ export class PaymentsService {
     });
   }
 
-  async update(id: number, updatePaymentDto: UpdatePaymentDto) {
+  async update(id: number, updatePaymentDto: UpdatePaymentDto, file?: any) {
     // Check if payment exists and get its details
     const existingPayment = await this.findOne(id);
 
+    console.log('eeee', updatePaymentDto);
     // Prevent changing invoice links
-    if (
+    /* if (
       updatePaymentDto.purchaseInvoiceId ||
       updatePaymentDto.saleInvoiceId ||
       updatePaymentDto.supplierId ||
       updatePaymentDto.clientId
     ) {
       throw new BadRequestException(
-        'Cannot change invoice or entity associations. Create a new payment instead.',
+        "Impossible de modifier les associations de facture ou d'entité. Créez un nouveau paiement à la place.",
       );
+    } */
+
+    // Validate payment method specific fields if method is being changed
+    if (updatePaymentDto.method) {
+      const tempDto = { ...existingPayment, ...updatePaymentDto };
+      this.validatePaymentMethodFields(tempDto);
+    }
+
+    // Handle file upload - delete old file if new file is provided
+    let fileData = { path: null, name: null } as {
+      path: string | null;
+      name: string | null;
+    };
+    let shouldDeleteOldFile = false;
+
+    if (file) {
+      fileData = await this.saveFile(file);
+      shouldDeleteOldFile = true;
+    } else if (updatePaymentDto.receiptFile === null) {
+      // If explicitly set to null, delete the file
+      shouldDeleteOldFile = true;
     }
 
     // Use transaction to ensure data consistency
@@ -162,10 +330,39 @@ export class PaymentsService {
       const newAmount = updatePaymentDto.amount ?? oldAmount;
       const amountDiff = newAmount - oldAmount;
 
+      // Delete old file if needed
+      if (shouldDeleteOldFile && existingPayment.receiptFile) {
+        await this.deleteFile(existingPayment.receiptFile);
+      }
+
+      // Build update data
+      const updateData: any = {
+        amount: updatePaymentDto.amount,
+        method: updatePaymentDto.method,
+        checkDate: updatePaymentDto.checkDate
+          ? new Date(updatePaymentDto.checkDate)
+          : undefined,
+        checkBank: updatePaymentDto.checkBank,
+        checkNumber: updatePaymentDto.checkNumber,
+        traitDate: updatePaymentDto.traitDate
+          ? new Date(updatePaymentDto.traitDate)
+          : undefined,
+        traitNumber: updatePaymentDto.traitNumber,
+      };
+
+      // Only update file fields if file was uploaded or explicitly set to null
+      if (file) {
+        updateData.receiptFile = fileData.path;
+        updateData.receiptFileName = fileData.name;
+      } else if (updatePaymentDto.receiptFile === null) {
+        updateData.receiptFile = null;
+        updateData.receiptFileName = null;
+      }
+
       // Update the payment
       const updatedPayment = await prisma.payment.update({
         where: { id },
-        data: updatePaymentDto,
+        data: updateData,
       });
 
       // If amount changed, update invoice status
@@ -229,7 +426,7 @@ export class PaymentsService {
 
     if (payment.createdAt < twentyFourHoursAgo) {
       throw new BadRequestException(
-        'Cannot delete payments older than 24 hours.',
+        'Impossible de supprimer les paiements de plus de 24 heures.',
       );
     }
 
@@ -239,6 +436,11 @@ export class PaymentsService {
       await prisma.payment.delete({
         where: { id },
       });
+
+      // Delete associated file
+      if (payment.receiptFile) {
+        await this.deleteFile(payment.receiptFile);
+      }
 
       // Check and update invoice status after deletion
       if (payment.purchaseInvoiceId) {
@@ -283,11 +485,10 @@ export class PaymentsService {
         }
       }
 
-      return { message: 'Payment deleted successfully', id };
+      return { message: 'Paiement supprimé avec succès', id };
     });
   }
 
-  // Helper method to update purchase invoice status
   private async updatePurchaseInvoiceStatus(
     prisma: any,
     invoiceId: number,
@@ -310,13 +511,9 @@ export class PaymentsService {
         where: { id: invoiceId },
         data: { status: newStatus },
       });
-      console.log(
-        `Purchase invoice ${invoice.invoiceNumber} status updated from ${invoice.status} to ${newStatus}`,
-      );
     }
   }
 
-  // Helper method to update sale invoice status
   private async updateSaleInvoiceStatus(
     prisma: any,
     invoiceId: number,
@@ -339,9 +536,6 @@ export class PaymentsService {
         where: { id: invoiceId },
         data: { status: newStatus },
       });
-      console.log(
-        `Sale invoice ${invoice.invoiceNumber} status updated from ${invoice.status} to ${newStatus}`,
-      );
     }
   }
 
@@ -412,7 +606,7 @@ export class PaymentsService {
     });
 
     if (!payment) {
-      throw new NotFoundException(`Payment with id ${id} not found.`);
+      throw new NotFoundException(`Paiement avec l'ID ${id} non trouvé.`);
     }
 
     return payment;
@@ -602,7 +796,6 @@ export class PaymentsService {
       },
     });
 
-    // Get invoices to know their totals
     let invoices;
     if (type === 'purchase') {
       invoices = await this.prisma.purchaseInvoice.findMany({
