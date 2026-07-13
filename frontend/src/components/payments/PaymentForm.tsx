@@ -1,7 +1,7 @@
 // src/components/payments/PaymentForm.tsx
 "use client";
 
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import Select from "react-select";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
@@ -17,6 +17,13 @@ interface PaymentFormProps {
         entityId: number;
         invoiceNumber?: string;
         remainingBalance?: number;
+        receiptFile?: string;
+        receiptFileName?: string;
+        checkDate?: string;
+        checkBank?: string;
+        checkNumber?: string;
+        traitDate?: string;
+        traitNumber?: string;
     };
     isEditing?: boolean;
     supplierId?: string;
@@ -57,9 +64,10 @@ interface SelectOption {
 const paymentMethods: SelectOption[] = [
     { value: "CASH", label: "Espèces" },
     { value: "CHECK", label: "Chèque" },
-    { value: "BANK_TRANSFER", label: "Virement Bancaire" },
+    /* { value: "BANK_TRANSFER", label: "Virement Bancaire" },
     { value: "CREDIT_CARD", label: "Carte Bancaire" },
-    { value: "MOBILE_PAYMENT", label: "Paiement Mobile" },
+    { value: "MOBILE_PAYMENT", label: "Paiement Mobile" }, */
+    { value: "TRAIT", label: "Traite" },
 ];
 
 const paymentTypes: SelectOption[] = [
@@ -105,6 +113,8 @@ export function PaymentForm({
     isLoading = false,
 }: PaymentFormProps) {
     const router = useRouter();
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    console.log(initialData);
 
     // CRITICAL: Add mounted state to prevent hydration mismatch
     const [isMounted, setIsMounted] = useState(false);
@@ -132,6 +142,40 @@ export function PaymentForm({
         initialData?.invoiceNumber || ""
     );
     const [originalPaymentAmount, setOriginalPaymentAmount] = useState<number>(0);
+
+    // CHECK specific fields
+    const [checkDate, setCheckDate] = useState<string>(
+        initialData?.checkDate || ""
+    );
+    const [checkBank, setCheckBank] = useState<string>(
+        initialData?.checkBank || ""
+    );
+    const [checkNumber, setCheckNumber] = useState<string>(
+        initialData?.checkNumber || ""
+    );
+
+    // TRAIT specific fields
+    const [traitDate, setTraitDate] = useState<string>(
+        initialData?.traitDate || ""
+    );
+    const [traitNumber, setTraitNumber] = useState<string>(
+        initialData?.traitNumber || ""
+    );
+
+    // File upload states
+    const [selectedFile, setSelectedFile] = useState<File | null>(null);
+    const [currentFile, setCurrentFile] = useState<{
+        path: string;
+        name: string;
+    } | null>(
+        initialData?.receiptFile && initialData?.receiptFileName
+            ? {
+                path: initialData.receiptFile,
+                name: initialData.receiptFileName,
+            }
+            : null
+    );
+    const [removeFile, setRemoveFile] = useState<boolean>(false);
 
     // Options
     const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -179,7 +223,6 @@ export function PaymentForm({
         if (suppliersData && isMounted) {
             setSuppliers(suppliersData);
 
-            // Priority: initialData (edit mode) > supplierId prop (URL param)
             let entityIdToUse = initialData?.entityId?.toString() || supplierId;
 
             if (entityIdToUse) {
@@ -201,7 +244,6 @@ export function PaymentForm({
         if (clientsData && isMounted) {
             setClients(clientsData);
 
-            // Priority: initialData (edit mode) > clientId prop (URL param)
             let entityIdToUse = initialData?.entityId?.toString() || clientId;
 
             if (entityIdToUse) {
@@ -224,13 +266,11 @@ export function PaymentForm({
 
         const totalPaid = invoice.payments?.reduce((sum, p) => sum + p.amount, 0) || 0;
 
-        // If editing, subtract the original payment amount from total paid
         let adjustedTotalPaid = totalPaid;
         if (isEditing && initialData?.id && originalPaymentAmount > 0) {
             adjustedTotalPaid = totalPaid - originalPaymentAmount;
         }
 
-        // If newAmount is provided, add it to the adjusted paid amount
         if (newAmount !== undefined && newAmount > 0) {
             adjustedTotalPaid += newAmount;
         }
@@ -259,7 +299,6 @@ export function PaymentForm({
                     );
                     setPurchaseInvoices(filtered);
 
-                    // If editing, auto-select the invoice
                     if (isEditing && initialData?.invoiceId) {
                         const invoice = filtered.find((i) => i.id === initialData.invoiceId);
                         if (invoice) {
@@ -270,7 +309,6 @@ export function PaymentForm({
                             };
                             setSelectedPurchaseInvoice(option);
                             setInvoiceId(initialData.invoiceId.toString());
-                            // Calculate remaining with current amount
                             calculateRemainingBalance(invoice, parseFloat(amount) || 0);
                         }
                     }
@@ -281,7 +319,6 @@ export function PaymentForm({
                     );
                     setSaleInvoices(filtered);
 
-                    // If editing, auto-select the invoice
                     if (isEditing && initialData?.invoiceId) {
                         const invoice = filtered.find((i) => i.id === initialData.invoiceId);
                         if (invoice) {
@@ -292,7 +329,6 @@ export function PaymentForm({
                             };
                             setSelectedSaleInvoice(option);
                             setInvoiceId(initialData.invoiceId.toString());
-                            // Calculate remaining with current amount
                             calculateRemainingBalance(invoice, parseFloat(amount) || 0);
                         }
                     }
@@ -309,7 +345,6 @@ export function PaymentForm({
     // Recalculate remaining balance when amount changes in edit mode
     useEffect(() => {
         if (isEditing && initialData?.invoiceId && entityId) {
-            // Find the current invoice
             const currentInvoice = paymentType === 'purchase'
                 ? purchaseInvoices.find(inv => inv.id === parseInt(invoiceId))
                 : saleInvoices.find(inv => inv.id === parseInt(invoiceId));
@@ -414,6 +449,52 @@ export function PaymentForm({
     const handleMethodChange = (selectedOption: SelectOption | null) => {
         if (!selectedOption) return;
         setMethod(selectedOption.value as string);
+        // Reset CHECK/TRAIT fields when method changes
+        if (selectedOption.value !== "CHECK") {
+            setCheckDate("");
+            setCheckBank("");
+            setCheckNumber("");
+        }
+        if (selectedOption.value !== "TRAIT") {
+            setTraitDate("");
+            setTraitNumber("");
+        }
+    };
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            // Validate file size (5MB)
+            if (file.size > 5 * 1024 * 1024) {
+                showToast("Le fichier est trop volumineux (max 5MB)", "error");
+                e.target.value = '';
+                return;
+            }
+
+            // Validate file type
+            const allowedTypes = ['image/jpeg', 'image/png', 'image/jpg', 'application/pdf'];
+            if (!allowedTypes.includes(file.type)) {
+                showToast("Format de fichier non supporté. Utilisez JPG, PNG ou PDF.", "error");
+                e.target.value = '';
+                return;
+            }
+
+            setSelectedFile(file);
+            setCurrentFile({
+                path: URL.createObjectURL(file),
+                name: file.name,
+            });
+            setRemoveFile(false);
+        }
+    };
+
+    const handleRemoveFile = () => {
+        setSelectedFile(null);
+        setCurrentFile(null);
+        setRemoveFile(true);
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
     };
 
     const handleSubmit = async (event: React.FormEvent) => {
@@ -441,17 +522,58 @@ export function PaymentForm({
             return;
         }
 
-        /* if (amountNum > remainingBalance) {
+        // Validate CHECK fields
+        if (method === "CHECK") {
+            if (!checkDate) {
+                showToast("La date du chèque est requise", "error");
+                return;
+            }
+            if (!checkBank) {
+                showToast("La banque est requise", "error");
+                return;
+            }
+            if (!checkNumber) {
+                showToast("Le numéro de chèque est requis", "error");
+                return;
+            }
+        }
+
+        // Validate TRAIT fields
+        if (method === "TRAIT") {
+            if (!traitDate) {
+                showToast("La date du trait est requise", "error");
+                return;
+            }
+            if (!traitNumber) {
+                showToast("Le numéro du trait est requis", "error");
+                return;
+            }
+        }
+
+        // Check if amount exceeds remaining balance
+        if (amountNum > remainingBalance && remainingBalance > 0) {
             showToast(
                 `Le montant dépasse le solde restant (${remainingBalance.toFixed(3)} DH)`,
                 "error"
             );
             return;
-        } */
+        }
 
-        const paymentData = {
+        // Prepare data for submission
+        let paymentData: any = {
             amount: amountNum,
             method,
+            // Add CHECK fields if method is CHECK
+            ...(method === "CHECK" && {
+                checkDate: checkDate,
+                checkBank: checkBank,
+                checkNumber: checkNumber,
+            }),
+            // Add TRAIT fields if method is TRAIT
+            ...(method === "TRAIT" && {
+                traitDate: traitDate,
+                traitNumber: traitNumber,
+            }),
             ...(paymentType === "purchase"
                 ? {
                     purchaseInvoiceId: parseInt(invoiceId),
@@ -463,6 +585,47 @@ export function PaymentForm({
                 }),
         };
 
+        // Handle file upload
+        if (selectedFile) {
+            // If there's a new file, use FormData
+            const formData = new FormData();
+            formData.append('amount', amountNum.toString());
+            formData.append('method', method);
+            formData.append('receiptFile', selectedFile);
+
+            // Add CHECK fields
+            if (method === "CHECK") {
+                formData.append('checkDate', checkDate);
+                formData.append('checkBank', checkBank);
+                formData.append('checkNumber', checkNumber);
+            }
+
+            // Add TRAIT fields
+            if (method === "TRAIT") {
+                formData.append('traitDate', traitDate);
+                formData.append('traitNumber', traitNumber);
+            }
+
+            if (paymentType === "purchase") {
+                formData.append('purchaseInvoiceId', invoiceId);
+                formData.append('supplierId', entityId);
+            } else {
+                formData.append('saleInvoiceId', invoiceId);
+                formData.append('clientId', entityId);
+            }
+
+            // For edit mode, also send the ID
+            /* if (isEditing && initialData?.id) {
+                formData.append('id', initialData.id.toString());
+            } */
+
+            paymentData = formData;
+        } else if (removeFile && isEditing) {
+            // If removing file in edit mode, send null
+            paymentData.receiptFile = null;
+            paymentData.receiptFileName = null;
+        }
+
         try {
             await onSubmit(paymentData);
             showToast(
@@ -472,7 +635,6 @@ export function PaymentForm({
                 "success"
             );
 
-            // Redirect with delay to show toast
             setTimeout(() => {
                 if (paymentType || entityId) {
                     const params = new URLSearchParams();
@@ -497,6 +659,11 @@ export function PaymentForm({
 
     const currentSelectedEntity = paymentType === "purchase" ? selectedSupplier : selectedClient;
     const currentSelectedInvoice = paymentType === "purchase" ? selectedPurchaseInvoice : selectedSaleInvoice;
+
+    // Check if CHECK fields should be shown
+    const showCheckFields = method === "CHECK";
+    // Check if TRAIT fields should be shown
+    const showTraitFields = method === "TRAIT";
 
     // CRITICAL: Return loading state during SSR to prevent hydration mismatch
     if (!isMounted) {
@@ -666,7 +833,6 @@ export function PaymentForm({
                                     onChange={(e) => {
                                         const newAmount = e.target.value;
                                         setAmount(newAmount);
-                                        // Recalculate remaining balance when amount changes in edit mode
                                         if (isEditing && initialData?.invoiceId) {
                                             const currentInvoice = paymentType === 'purchase'
                                                 ? purchaseInvoices.find(inv => inv.id === parseInt(invoiceId))
@@ -688,25 +854,134 @@ export function PaymentForm({
                                 )}
                             </div>
 
-                            {/* Full Payment Checkbox */}
-                            {/* <div className="mt-4">
-                                <label className="flex items-center gap-2 text-sm font-medium text-black dark:text-white">
-                                    <input
-                                        type="checkbox"
-                                        checked={parseFloat(amount) === remainingBalance && remainingBalance > 0}
-                                        onChange={(e) => {
-                                            if (e.target.checked && remainingBalance > 0) {
-                                                setAmount(remainingBalance.toString());
-                                            } else if (!e.target.checked) {
-                                                setAmount("");
-                                            }
-                                        }}
-                                        className="h-4 w-4 rounded border-stroke text-primary focus:ring-primary"
-                                    />
-                                    Enregistrer comme paiement complet
+                            {/* CHECK Fields - Conditional */}
+                            {showCheckFields && (
+                                <div className="mt-6 border-t border-stroke pt-6 dark:border-strokedark">
+                                    <h4 className="mb-4 text-md font-semibold text-black dark:text-white">
+                                        Informations du Chèque
+                                    </h4>
+                                    <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+                                        <div>
+                                            <label className="mb-3 block text-sm font-medium text-black dark:text-white">
+                                                Date du Chèque *
+                                            </label>
+                                            <input
+                                                type="date"
+                                                value={checkDate}
+                                                onChange={(e) => setCheckDate(e.target.value)}
+                                                className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="mb-3 block text-sm font-medium text-black dark:text-white">
+                                                Banque *
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={checkBank}
+                                                onChange={(e) => setCheckBank(e.target.value)}
+                                                placeholder="Nom de la banque"
+                                                className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="mb-3 block text-sm font-medium text-black dark:text-white">
+                                                Numéro de Chèque *
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={checkNumber}
+                                                onChange={(e) => setCheckNumber(e.target.value)}
+                                                placeholder="Numéro du chèque"
+                                                className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* TRAIT Fields - Conditional */}
+                            {showTraitFields && (
+                                <div className="mt-6 border-t border-stroke pt-6 dark:border-strokedark">
+                                    <h4 className="mb-4 text-md font-semibold text-black dark:text-white">
+                                        Informations du Trait (Canbiala)
+                                    </h4>
+                                    <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                                        <div>
+                                            <label className="mb-3 block text-sm font-medium text-black dark:text-white">
+                                                Date du Trait *
+                                            </label>
+                                            <input
+                                                type="date"
+                                                value={traitDate}
+                                                onChange={(e) => setTraitDate(e.target.value)}
+                                                className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                                            />
+                                        </div>
+                                        <div>
+                                            <label className="mb-3 block text-sm font-medium text-black dark:text-white">
+                                                Numéro du Trait *
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={traitNumber}
+                                                onChange={(e) => setTraitNumber(e.target.value)}
+                                                placeholder="Numéro du trait"
+                                                className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                                            />
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* File Upload */}
+                            <div className="mt-6">
+                                <label className="mb-3 block text-sm font-medium text-black dark:text-white">
+                                    Reçu / Justificatif
                                 </label>
+
+                                <div className="flex items-center gap-4">
+                                    <input
+                                        ref={fileInputRef}
+                                        type="file"
+                                        accept=".jpg,.jpeg,.png,.pdf"
+                                        onChange={handleFileChange}
+                                        className="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 dark:file:bg-blue-900/20 dark:file:text-blue-400"
+                                    />
+                                    {currentFile && (
+                                        <button
+                                            type="button"
+                                            onClick={handleRemoveFile}
+                                            className="text-red-600 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
+                                        >
+                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                                                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                                            </svg>
+                                        </button>
+                                    )}
+                                </div>
+
+                                {currentFile && (
+                                    <p className="mt-2 text-sm text-gray-600 dark:text-gray-400">
+                                        📎 {currentFile.name}
+                                        {isEditing && initialData?.receiptFile && !selectedFile && !removeFile && (
+                                            <span className="ml-2 text-xs text-green-600 dark:text-green-400">
+                                                (fichier existant)
+                                            </span>
+                                        )}
+                                        {selectedFile && (
+                                            <span className="ml-2 text-xs text-blue-600 dark:text-blue-400">
+                                                (nouveau fichier)
+                                            </span>
+                                        )}
+                                    </p>
+                                )}
+
+                                <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                                    Formats acceptés: JPG, PNG, PDF • Taille max: 5MB
+                                </p>
                             </div>
- */}
+
                             {/* Date */}
                             <div className="mt-6">
                                 <label className="mb-3 block text-sm font-medium text-black dark:text-white">

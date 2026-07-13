@@ -7,7 +7,6 @@ import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import { PaymentForm } from "@/components/payments/PaymentForm";
 
-// ✅ Updated Payment interface with full invoice objects
 interface Payment {
   id: number;
   amount: number;
@@ -33,6 +32,15 @@ interface Payment {
     id: number;
     name: string;
   };
+  receiptFile?: string;
+  receiptFileName?: string;
+  // CHECK specific fields
+  checkDate?: string;
+  checkBank?: string;
+  checkNumber?: string;
+  // TRAIT specific fields
+  traitDate?: string;
+  traitNumber?: string;
 }
 
 const fetchPayment = async (id: string): Promise<Payment> => {
@@ -44,16 +52,29 @@ const fetchPayment = async (id: string): Promise<Payment> => {
 };
 
 const updatePayment = async ({ id, data }: { id: string; data: any }) => {
+  // Check if we're sending FormData (for file upload)
+  const isFormData = data instanceof FormData;
+
+  // If it's FormData, remove any association fields that shouldn't be updated
+  if (isFormData) {
+    // We can't delete from FormData easily, so we need to handle this differently
+    // Actually, we'll let the service handle it, but we won't send association fields
+    // The form should not include these fields in edit mode
+  }
+
   const response = await fetch(
     `${process.env.NEXT_PUBLIC_API_URL}payments/${id}`,
     {
       method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(data),
+      body: isFormData ? data : JSON.stringify(data),
+      ...(isFormData ? {} : {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }),
     }
   );
+
   if (!response.ok) {
     const error = await response.json();
     throw new Error(error.message || "Failed to update payment");
@@ -78,7 +99,6 @@ export default function EditPaymentPage() {
     if (payment) {
       const isPurchase = !!payment.purchaseInvoiceId;
 
-      // ✅ Get invoice number from the full invoice object
       let invoiceNumber = "";
       if (isPurchase && payment.purchaseInvoice) {
         invoiceNumber = payment.purchaseInvoice.invoiceNumber;
@@ -86,24 +106,74 @@ export default function EditPaymentPage() {
         invoiceNumber = payment.saleInvoice.invoiceNumber;
       }
 
-      console.log("Invoice Number:", invoiceNumber); // ✅ Now you have the invoice number
+      // Format dates for input fields (YYYY-MM-DD)
+      const formatDate = (dateString?: string) => {
+        if (!dateString) return "";
+        try {
+          const date = new Date(dateString);
+          return date.toISOString().split('T')[0];
+        } catch {
+          return "";
+        }
+      };
 
       setInitialData({
         id: payment.id,
         amount: payment.amount,
         method: payment.method,
-        invoiceNumber: invoiceNumber, // ✅ Pass invoice number to form
+        invoiceNumber: invoiceNumber,
         paymentType: isPurchase ? "purchase" : "sale",
         invoiceId: isPurchase
           ? payment.purchaseInvoiceId
           : payment.saleInvoiceId,
         entityId: isPurchase ? payment.supplierId : payment.clientId,
+        receiptFile: payment.receiptFile,
+        receiptFileName: payment.receiptFileName,
+        // CHECK fields
+        checkDate: formatDate(payment.checkDate),
+        checkBank: payment.checkBank || "",
+        checkNumber: payment.checkNumber || "",
+        // TRAIT fields
+        traitDate: formatDate(payment.traitDate),
+        traitNumber: payment.traitNumber || "",
       });
     }
   }, [payment]);
 
   const mutation = useMutation({
-    mutationFn: ({ data }: { data: any }) => updatePayment({ id, data }),
+    mutationFn: ({ data }: { data: any }) => {
+      // Remove association fields from update data
+      // These should not be sent in the update request
+      const updateData = { ...data };
+
+      // Remove association fields that shouldn't be updated
+      delete updateData.purchaseInvoiceId;
+      delete updateData.saleInvoiceId;
+      delete updateData.supplierId;
+      delete updateData.clientId;
+      delete updateData.paymentType;
+      delete updateData.invoiceId;
+      delete updateData.entityId;
+      delete updateData.invoiceNumber;
+      delete updateData.remainingBalance;
+      delete updateData.id;
+
+      // If it's FormData (file upload), we need to handle it differently
+      // because we can't delete from FormData
+      if (updateData instanceof FormData) {
+        // Create a new FormData without the association fields
+        const newFormData = new FormData();
+        for (const [key, value] of updateData.entries()) {
+          // Skip association fields
+          if (!['purchaseInvoiceId', 'saleInvoiceId', 'supplierId', 'clientId', 'paymentType', 'invoiceId', 'entityId', 'invoiceNumber', 'remainingBalance', 'id'].includes(key)) {
+            newFormData.append(key, value);
+          }
+        }
+        return updatePayment({ id, data: newFormData });
+      }
+
+      return updatePayment({ id, data: updateData });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["payments"] });
       queryClient.invalidateQueries({ queryKey: ["payment", id] });

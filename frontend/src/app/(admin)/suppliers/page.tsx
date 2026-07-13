@@ -6,7 +6,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as Toast from "@radix-ui/react-toast";
 import * as Dialog from "@radix-ui/react-dialog";
 import { useRouter } from "next/navigation";
-import { HandCoins, Pencil, Trash2, Truck } from "lucide-react";
+import { HandCoins, Pencil, Trash2, History } from "lucide-react";
 
 type Supplier = {
   id: number;
@@ -80,6 +80,10 @@ export default function SuppliersPage() {
     router.push(`/payments?type=purchase&entityId=${supplier.id}`);
   };
 
+  const handlePaymentHistory = (supplier: Supplier) => {
+    router.push(`/payments-history?type=purchase&entityId=${supplier.id}`);
+  };
+
   const handleEdit = (supplier: Supplier) => {
     router.push(`/suppliers/edit/${supplier.id}`);
   };
@@ -144,9 +148,16 @@ export default function SuppliersPage() {
           <button
             onClick={() => handlePayment(row.original)}
             className="p-1.5 text-gray-600 hover:bg-gray-50 dark:hover:bg-gray-700 rounded-md transition-colors"
-            title="Paiements"
+            title="Ajouter un paiement"
           >
             <HandCoins className="w-5 h-5" />
+          </button>
+          <button
+            onClick={() => handlePaymentHistory(row.original)}
+            className="p-1.5 text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-md transition-colors"
+            title="Historique des paiements"
+          >
+            <History className="w-5 h-5" />
           </button>
         </div>
       ),

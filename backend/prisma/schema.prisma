@@ -24,6 +24,7 @@ enum PaymentMethod {
   BANK_TRANSFER
   CREDIT_CARD
   MOBILE_PAYMENT
+  TRAIT
 }
 
 enum OrderStatus {
@@ -497,12 +498,26 @@ model SaleInvoiceItem {
 // PAYMENT MODEL
 //////////////////////////////////////
 
+
 model Payment {
   id            Int           @id @default(autoincrement())
   amount        Float
   method        PaymentMethod
   createdAt     DateTime      @default(now())
 
+  // Check specific fields
+  checkDate     DateTime?
+  checkBank     String?
+  checkNumber   String?
+  
+  // Trait (canbiala) specific fields
+  traitDate     DateTime?
+  traitNumber   String?
+  
+  // File upload
+  receiptFile   String?       // Store file path or URL
+  receiptFileName String?     // Original file name
+  
   purchaseInvoiceId Int?
   purchaseInvoice   PurchaseInvoice? @relation("PurchaseInvoicePayments", fields: [purchaseInvoiceId], references: [id])
 
