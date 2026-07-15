@@ -1,4 +1,5 @@
 // src/products/products.controller.ts
+
 import {
   Controller,
   Post,
@@ -13,11 +14,14 @@ import {
   BadRequestException,
   Query,
   ValidationPipe,
+  NotFoundException,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ProductsService } from './products.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { CreateProductCraftDto } from './dto/create-product-craft.dto';
+import { UpdateProductCraftDto } from './dto/update-product-craft.dto';
 import { multerConfigProducts } from '../config/multer.config';
 import { SearchProductsDto } from './dto/search-products.dto';
 
@@ -32,18 +36,73 @@ export class ProductsController {
     @UploadedFile() file?: Express.Multer.File,
   ) {
     try {
-      // Handle image upload if provided
       let imageUrl: string | undefined;
 
       if (file) {
         const hostUrl =
           process.env.imagePath || 'https://api.brooklyn-store.tn';
-        // Normalize path for URL (replace backslashes with forward slashes)
         const normalizedPath = file.path.replace(/\\/g, '/');
         imageUrl = `${hostUrl}/${normalizedPath}`;
       }
 
       return await this.productsService.create(createProductDto, imageUrl);
+    } catch (error: any) {
+      throw new BadRequestException(error.message);
+    }
+  }
+
+  @Post('product-craft')
+  @UseInterceptors(FileInterceptor('image', multerConfigProducts))
+  async createProductCraft(
+    @Body() body: any,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    try {
+      let imageUrl: string | undefined;
+
+      if (file) {
+        const hostUrl =
+          process.env.imagePath || 'https://api.brooklyn-store.tn';
+        const normalizedPath = file.path.replace(/\\/g, '/');
+        imageUrl = `${hostUrl}/${normalizedPath}`;
+      }
+
+      // Parse JSON strings from form-data
+      let productData = body.product;
+      let craftProductData = body.craftProduct;
+
+      if (productData && typeof productData === 'string') {
+        try {
+          productData = JSON.parse(productData);
+        } catch (e) {
+          throw new BadRequestException('Invalid product JSON format');
+        }
+      }
+
+      if (craftProductData && typeof craftProductData === 'string') {
+        try {
+          craftProductData = JSON.parse(craftProductData);
+        } catch (e) {
+          throw new BadRequestException('Invalid craftProduct JSON format');
+        }
+      }
+
+      // Create DTO instance
+      const createDto = new CreateProductCraftDto();
+      createDto.product = productData;
+      createDto.craftProduct = craftProductData;
+      createDto.createLinkedProduct =
+        body.createLinkedProduct === 'true' ||
+        body.createLinkedProduct === '1' ||
+        body.createLinkedProduct === true;
+
+      if (!createDto.product && !createDto.craftProduct) {
+        throw new BadRequestException(
+          'At least one of product or craftProduct must be provided',
+        );
+      }
+
+      return await this.productsService.createProductCraft(createDto, imageUrl);
     } catch (error: any) {
       throw new BadRequestException(error.message);
     }
@@ -66,6 +125,7 @@ export class ProductsController {
   async getFilterOptions() {
     return await this.productsService.getFilterOptions();
   }
+
   @Get(':id')
   async findOne(@Param('id', ParseIntPipe) id: number) {
     return await this.productsService.findOne(id);
@@ -99,6 +159,63 @@ export class ProductsController {
     }
   }
 
+  @Put('product-craft/:id')
+  @UseInterceptors(FileInterceptor('image', multerConfigProducts))
+  async updateProductCraft(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: any,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
+    try {
+      let imageUrl: string | undefined;
+
+      if (file) {
+        const hostUrl =
+          process.env.imagePath || 'https://api.brooklyn-store.tn';
+        const normalizedPath = file.path.replace(/\\/g, '/');
+        imageUrl = `${hostUrl}/${normalizedPath}`;
+      }
+
+      // Parse JSON strings from form-data
+      let productData = body.product;
+      let craftProductData = body.craftProduct;
+
+      if (productData && typeof productData === 'string') {
+        try {
+          productData = JSON.parse(productData);
+        } catch (e) {
+          throw new BadRequestException('Invalid product JSON format');
+        }
+      }
+
+      if (craftProductData && typeof craftProductData === 'string') {
+        try {
+          craftProductData = JSON.parse(craftProductData);
+        } catch (e) {
+          throw new BadRequestException('Invalid craftProduct JSON format');
+        }
+      }
+
+      const updateDto = new UpdateProductCraftDto();
+      updateDto.product = productData;
+      updateDto.craftProduct = craftProductData;
+
+      if (!updateDto.product && !updateDto.craftProduct) {
+        throw new BadRequestException(
+          'At least one of product or craftProduct must be provided',
+        );
+      }
+
+      return await this.productsService.updateProductCraft(
+        id,
+        updateDto,
+        imageUrl,
+      );
+    } catch (error: any) {
+      throw new BadRequestException(error.message);
+    }
+  }
+
   @Delete(':id')
   async remove(@Param('id', ParseIntPipe) id: number) {
     return await this.productsService.remove(id);
@@ -111,5 +228,18 @@ export class ProductsController {
     @Body('quantity', ParseIntPipe) quantity: number,
   ) {
     return await this.productsService.updateStock(id, quantity, operation);
+  }
+
+  // Get product with craft product
+  @Get('product-craft/:id')
+  async getProductWithCraft(@Param('id', ParseIntPipe) id: number) {
+    try {
+      return await this.productsService.getProductWithCraft(id);
+    } catch (error: any) {
+      if (error instanceof NotFoundException) {
+        throw error;
+      }
+      throw new BadRequestException(error.message);
+    }
   }
 }

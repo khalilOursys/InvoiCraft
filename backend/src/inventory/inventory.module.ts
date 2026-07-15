@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
 import { InventoryController } from './inventory.controller';
-import { ProductsModule } from 'src/products/products.module';
 import { StockMovementService } from './stock-movement.service';
 import { StockAlertService } from './stock-alert.service';
-import { PrismaService } from 'src/prisma.service';
+import { ProductsModule } from '../products/products.module';
+import { PrismaService } from '../prisma.service';
 
 @Module({
   imports: [ProductsModule],

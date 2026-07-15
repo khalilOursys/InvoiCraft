@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { HeroBannerService } from './hero-banner.service';
 import { HeroBannerController } from './hero-banner.controller';
-import { PrismaService } from 'src/prisma.service';
+import { PrismaService } from '../prisma.service';
 
 @Module({
   controllers: [HeroBannerController],

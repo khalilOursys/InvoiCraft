@@ -27,8 +27,8 @@ import { UpdateStockAlertDto } from './dto/stock-alert.dto';
 import { CreateStockMovementDto } from './dto/create-stock-movement.dto';
 import { StockMovementType, StockMovementStatus } from '@prisma/client';
 import { StockAlertService } from './stock-alert.service';
-import { PrismaService } from 'src/prisma.service';
 import { UpdateStockMovementDto } from './dto/update-stock-movement.dto';
+import { PrismaService } from '../prisma.service';
 
 @Controller('inventory')
 export class InventoryController {

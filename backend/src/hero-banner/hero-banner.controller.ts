@@ -13,8 +13,8 @@ import {
 import { HeroBannerService } from './hero-banner.service';
 import { CreateHeroBannerDto } from './dto/create-hero-banner.dto';
 import { UpdateHeroBannerDto } from './dto/update-hero-banner.dto';
-import { multerConfigHeroBanner } from 'src/config/multer.config';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { multerConfigHeroBanner } from '../config/multer.config';
 
 @Controller('hero-banner')
 export class HeroBannerController {

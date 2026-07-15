@@ -13,8 +13,8 @@ import {
 import { BrandsService } from './brands.service';
 import { CreateBrandDto } from './dto/create-brand.dto';
 import { UpdateBrandDto } from './dto/update-brand.dto';
-import { multerConfigBrands } from 'src/config/multer.config';
 import { FileInterceptor } from '@nestjs/platform-express';
+import { multerConfigBrands } from '../config/multer.config';
 
 @Controller('brands')
 export class BrandsController {

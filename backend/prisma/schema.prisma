@@ -261,11 +261,11 @@ model Product {
 
 model CraftProduct {
   id               Int                      @id @default(autoincrement())
-  reference        String                   @unique
-  name             String
+  reference        String?
+  name             String?
   description      String?                  
   unit             String                   // mg, ml, g, L, kg, unit
-  amount           Float                    // Current stock amount
+  amount           Float                    @default(0)// Current stock amount
   totalCost        Float?                   // Calculated total cost
   salePrice        Float?                   // Calculated sale price
   marginPercent    Float                    @default(30)
@@ -337,6 +337,7 @@ model Service {
   description     String?
   name            String
   price           Float                    @default(0)
+  vat             Float                    @default(19)  
   isActive        Boolean                  @default(true)
   createdAt       DateTime                 @default(now())
   updatedAt       DateTime                 @updatedAt
