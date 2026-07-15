@@ -16,6 +16,18 @@ interface Brand {
   name: string;
 }
 
+interface RawMaterial {
+  id: number;
+  name: string;
+  unit: string;
+}
+
+interface Service {
+  id: number;
+  name: string;
+  price: number;
+}
+
 const fetchCategories = async (): Promise<Category[]> => {
   const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}categories`);
   if (!response.ok) throw new Error("Échec de la récupération des catégories");
@@ -28,8 +40,20 @@ const fetchBrands = async (): Promise<Brand[]> => {
   return response.json();
 };
 
-const createProduct = async (formData: FormData) => {
-  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}products`, {
+const fetchRawMaterials = async (): Promise<RawMaterial[]> => {
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}raw-materials`);
+  if (!response.ok) throw new Error("Échec de la récupération des matières premières");
+  return response.json();
+};
+
+const fetchServices = async (): Promise<Service[]> => {
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}services`);
+  if (!response.ok) throw new Error("Échec de la récupération des services");
+  return response.json();
+};
+
+const createProductCraft = async (formData: FormData) => {
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}products/product-craft`, {
     method: "POST",
     body: formData,
   });
@@ -46,11 +70,21 @@ const vatOptions = [
   { value: 19, label: "19%" },
 ];
 
+const unitOptions = [
+  { value: "mg", label: "mg" },
+  { value: "ml", label: "ml" },
+  { value: "g", label: "g" },
+  { value: "L", label: "L" },
+  { value: "kg", label: "kg" },
+  { value: "unit", label: "Unité" },
+];
+
 export default function AddProductPage() {
   const queryClient = useQueryClient();
   const router = useRouter();
 
   const [formData, setFormData] = useState({
+    // Product fields
     reference: "",
     internalCode: "",
     name: "",
@@ -63,9 +97,21 @@ export default function AddProductPage() {
     priceIncludingTax: 0,
     discount: 0,
     vat: "19",
-    fodec: 0, // ADD FODEC FIELD
+    fodec: 0,
     categoryId: "",
     brandId: "",
+    // Craft product fields
+    craftReference: "",
+    craftName: "",
+    craftDescription: "",
+    craftUnit: "kg",
+    craftAmount: 0,
+    craftMarginPercent: 30,
+    craftVat: 19,
+    craftMinStock: 5,
+    craftProductId: "",
+    craftMaterials: [] as { rawMaterialId: number; amount: number }[],
+    craftServiceIds: [] as number[],
   });
 
   const [image, setImage] = useState<File | null>(null);
@@ -74,6 +120,7 @@ export default function AddProductPage() {
   const [toastOpen, setToastOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
   const [toastType, setToastType] = useState<"success" | "error">("success");
+  const [createBoth, setCreateBoth] = useState(true);
 
   const { data: categories = [] } = useQuery({
     queryKey: ["categories"],
@@ -83,6 +130,16 @@ export default function AddProductPage() {
   const { data: brands = [] } = useQuery({
     queryKey: ["brands"],
     queryFn: fetchBrands
+  });
+
+  const { data: rawMaterials = [] } = useQuery({
+    queryKey: ["rawMaterials"],
+    queryFn: fetchRawMaterials
+  });
+
+  const { data: services = [] } = useQuery({
+    queryKey: ["services"],
+    queryFn: fetchServices
   });
 
   const calculateSalePrice = () => {
@@ -134,7 +191,7 @@ export default function AddProductPage() {
   };
 
   const createMutation = useMutation({
-    mutationFn: createProduct,
+    mutationFn: createProductCraft,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["products"] });
       showToast("✅ Produit créé avec succès", "success");
@@ -146,12 +203,45 @@ export default function AddProductPage() {
     onSettled: () => setIsSubmitting(false),
   });
 
+  const handleAddMaterial = () => {
+    setFormData(prev => ({
+      ...prev,
+      craftMaterials: [...prev.craftMaterials, { rawMaterialId: 0, amount: 0 }]
+    }));
+  };
+
+  const handleRemoveMaterial = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      craftMaterials: prev.craftMaterials.filter((_, i) => i !== index)
+    }));
+  };
+
+  const handleMaterialChange = (index: number, field: string, value: any) => {
+    const updated = [...formData.craftMaterials];
+    updated[index] = { ...updated[index], [field]: value };
+    setFormData(prev => ({ ...prev, craftMaterials: updated }));
+  };
+
+  const handleServiceToggle = (serviceId: number) => {
+    setFormData(prev => {
+      const exists = prev.craftServiceIds.includes(serviceId);
+      return {
+        ...prev,
+        craftServiceIds: exists
+          ? prev.craftServiceIds.filter(id => id !== serviceId)
+          : [...prev.craftServiceIds, serviceId]
+      };
+    });
+  };
+
   const submitForm = async (event: React.FormEvent) => {
     event.preventDefault();
     setIsSubmitting(true);
 
+    // Validation for product
     if (!formData.name) {
-      showToast("Le nom est requis", "error");
+      showToast("Le nom du produit est requis", "error");
       setIsSubmitting(false);
       return;
     }
@@ -168,13 +258,82 @@ export default function AddProductPage() {
       return;
     }
 
-    const submitData = new FormData();
-    Object.entries(formData).forEach(([key, value]) => {
-      if (value !== "" && value !== null && key !== "brandId") {
-        submitData.append(key, String(value));
+    if (formData.salePrice <= 0) {
+      showToast("Le prix de vente doit être positif", "error");
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (formData.priceIncludingTax <= 0) {
+      showToast("Le prix TTC doit être positif", "error");
+      setIsSubmitting(false);
+      return;
+    }
+
+    // Validation for craft product if creating both
+    /* if (createBoth) {
+      if (!formData.craftReference) {
+        showToast("La référence du produit artisanal est requise", "error");
+        setIsSubmitting(false);
+        return;
       }
-    });
-    if (formData.brandId) submitData.append("brandId", formData.brandId);
+      if (!formData.craftName) {
+        showToast("Le nom du produit artisanal est requis", "error");
+        setIsSubmitting(false);
+        return;
+      }
+      if (formData.craftAmount <= 0) {
+        showToast("La quantité du produit artisanal doit être positive", "error");
+        setIsSubmitting(false);
+        return;
+      }
+    } */
+
+    // Build the data object
+    const productData = {
+      reference: formData.reference,
+      internalCode: formData.internalCode,
+      name: formData.name,
+      description: formData.description,
+      stock: formData.stock,
+      minStock: formData.minStock,
+      purchasePrice: formData.purchasePrice,
+      marginPercent: formData.marginPercent,
+      salePrice: formData.salePrice,
+      priceIncludingTax: formData.priceIncludingTax,
+      discount: formData.discount,
+      vat: parseInt(formData.vat),
+      fodec: formData.fodec,
+      categoryId: parseInt(formData.categoryId),
+      brandId: formData.brandId ? parseInt(formData.brandId) : undefined,
+    };
+
+    const craftProductData = createBoth ? {
+      reference: formData.craftReference,
+      name: formData.craftName,
+      description: formData.craftDescription,
+      unit: formData.craftUnit,
+      amount: formData.craftAmount,
+      marginPercent: formData.craftMarginPercent,
+      vat: formData.craftVat,
+      minStock: formData.craftMinStock,
+      productId: formData.craftProductId ? parseInt(formData.craftProductId) : undefined,
+      materials: formData.craftMaterials.filter(m => m.rawMaterialId > 0 && m.amount > 0),
+      serviceIds: formData.craftServiceIds,
+    } : undefined;
+
+    // Create FormData for submission
+    const submitData = new FormData();
+
+    // Add product as JSON string
+    submitData.append("product", JSON.stringify(productData));
+
+    // Add craft product as JSON string if creating both
+    if (craftProductData) {
+      submitData.append("craftProduct", JSON.stringify(craftProductData));
+    }
+
+    // Add image if exists
     if (image) submitData.append("image", image);
 
     createMutation.mutate(submitData);
@@ -194,6 +353,22 @@ export default function AddProductPage() {
             ← Retour à la liste
           </button>
         </div>
+
+        {/* Toggle for creating both */}
+        <div className="mb-6 rounded-sm border border-stroke bg-white shadow-default dark:border-strokedark dark:bg-boxdark p-4">
+          <label className="flex items-center gap-3 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={createBoth}
+              onChange={(e) => setCreateBoth(e.target.checked)}
+              className="h-4 w-4 accent-blue-600"
+            />
+            <span className="text-sm font-medium text-black dark:text-white">
+              Créer également un produit artisanal lié
+            </span>
+          </label>
+        </div>
+
         <div className="rounded-sm border border-stroke bg-white shadow-default dark:border-strokedark dark:bg-boxdark">
           <div className="border-b border-stroke px-6.5 py-4 dark:border-strokedark">
             <h3 className="text-xl font-semibold text-black dark:text-white">
@@ -331,7 +506,7 @@ export default function AddProductPage() {
                 </div>
 
                 {/* Marge (%) */}
-                <div>
+                {/* <div>
                   <label className="mb-3 block text-sm font-medium text-black dark:text-white">
                     Marge (%)
                   </label>
@@ -346,17 +521,18 @@ export default function AddProductPage() {
                     }}
                     className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
                   />
-                </div>
+                </div> */}
 
                 {/* Prix de vente */}
                 <div>
                   <label className="mb-3 block text-sm font-medium text-black dark:text-white">
-                    Prix de vente (DT)
+                    Prix de vente (DT) <span className="text-danger">*</span>
                   </label>
                   <input
                     type="number"
                     step="0.001"
                     min="0"
+                    required
                     value={formData.salePrice}
                     onChange={(e) => setFormData({ ...formData, salePrice: Number(e.target.value) })}
                     className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
@@ -366,18 +542,19 @@ export default function AddProductPage() {
                 {/* Prix TTC */}
                 <div>
                   <label className="mb-3 block text-sm font-medium text-black dark:text-white">
-                    Prix TTC (DT)
+                    Prix TTC (DT) <span className="text-danger">*</span>
                   </label>
                   <input
                     type="number"
                     step="0.001"
+                    required
                     value={formData.priceIncludingTax}
-                    readOnly
-                    className="w-full rounded-lg border-[1.5px] border-stroke bg-gray-100 px-5 py-3 outline-none dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                    onChange={(e) => setFormData({ ...formData, priceIncludingTax: Number(e.target.value) })}
+                    className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
                   />
                 </div>
 
-                {/* FODEC - NEW FIELD */}
+                {/* FODEC */}
                 <div>
                   <label className="mb-3 block text-sm font-medium text-black dark:text-white">
                     FODEC (%)
@@ -437,14 +614,14 @@ export default function AddProductPage() {
                   Description
                 </label>
                 <textarea
-                  rows={4}
+                  rows={3}
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
                 />
               </div>
 
-              {/* Téléchargement d'image */}
+              {/* Image upload */}
               <div className="mt-6">
                 <label className="mb-3 block text-sm font-medium text-black dark:text-white">
                   Image du produit
@@ -471,7 +648,111 @@ export default function AddProductPage() {
                 )}
               </div>
 
-              {/* Boutons */}
+              {/* Craft Product Section */}
+              {createBoth && (
+                <div className="mt-8 border-t border-stroke pt-6 dark:border-strokedark">
+                  <h3 className="mb-4 text-xl font-semibold text-black dark:text-white">
+                    Informations du produit artisanal
+                  </h3>
+
+                  <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+
+                    {/* Craft Unit */}
+                    <div>
+                      <label className="mb-3 block text-sm font-medium text-black dark:text-white">
+                        Unité <span className="text-danger">*</span>
+                      </label>
+                      <select
+                        required
+                        value={formData.craftUnit}
+                        onChange={(e) => setFormData({ ...formData, craftUnit: e.target.value })}
+                        className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                      >
+                        {unitOptions.map((unit) => (
+                          <option key={unit.value} value={unit.value}>
+                            {unit.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Materials Section */}
+                  <div className="mt-6">
+                    <div className="flex items-center justify-between mb-3">
+                      <label className="block text-sm font-medium text-black dark:text-white">
+                        Matières premières
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleAddMaterial}
+                        className="rounded-md bg-green-600 px-3 py-1 text-sm text-white hover:bg-green-700 transition-colors"
+                      >
+                        + Ajouter
+                      </button>
+                    </div>
+
+                    {formData.craftMaterials.map((material, index) => (
+                      <div key={index} className="mb-3 flex gap-3 items-end">
+                        <div className="flex-1">
+                          <select
+                            value={material.rawMaterialId}
+                            onChange={(e) => handleMaterialChange(index, 'rawMaterialId', Number(e.target.value))}
+                            className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                          >
+                            <option value={0}>Sélectionner une matière</option>
+                            {rawMaterials.map((rm) => (
+                              <option key={rm.id} value={rm.id}>
+                                {rm.name} ({rm.unit})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="flex-1">
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="Quantité"
+                            value={material.amount}
+                            onChange={(e) => handleMaterialChange(index, 'amount', Number(e.target.value))}
+                            className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveMaterial(index)}
+                          className="rounded-md bg-red-600 px-3 py-3 text-white hover:bg-red-700 transition-colors"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Services Section */}
+                  <div className="mt-6">
+                    <label className="mb-3 block text-sm font-medium text-black dark:text-white">
+                      Services
+                    </label>
+                    <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+                      {services.map((service) => (
+                        <label key={service.id} className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={formData.craftServiceIds.includes(service.id)}
+                            onChange={() => handleServiceToggle(service.id)}
+                            className="h-4 w-4 accent-blue-600"
+                          />
+                          <span className="text-sm">{service.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Submit Buttons */}
               <div className="mt-6 flex gap-4">
                 <button
                   type="button"
@@ -483,7 +764,7 @@ export default function AddProductPage() {
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="rounded-md border border-stroke px-6 py-3 font-medium hover:bg-gray-100 dark:hover:bg-meta-4 transition-colors"
+                  className="rounded-md bg-blue-600 px-6 py-3 font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
                 >
                   {isSubmitting ? (
                     <>
@@ -491,7 +772,7 @@ export default function AddProductPage() {
                       Enregistrement...
                     </>
                   ) : (
-                    "Enregistrer le produit"
+                    "Enregistrer"
                   )}
                 </button>
               </div>
@@ -499,7 +780,7 @@ export default function AddProductPage() {
           </form>
         </div>
 
-        {/* Notifications Toast */}
+        {/* Toast Notifications */}
         <Toast.Root
           open={toastOpen}
           onOpenChange={setToastOpen}

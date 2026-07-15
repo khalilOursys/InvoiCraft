@@ -485,13 +485,13 @@ export class CraftProductService {
           rawMaterialNewStock: rawMaterial.amount - amountToDeduct,
         });
 
-        this.checkRawMaterialStock(
+        /* this.checkRawMaterialStock(
           rawMaterial,
           amountToDeduct,
           rawMaterial.name,
           quantity,
           name,
-        );
+        ); */
 
         totalCost += rawMaterial.purchasePrice * amountToDeduct;
         await this.deductRawMaterialStock(
@@ -681,14 +681,14 @@ export class CraftProductService {
           rawMaterialCurrentStock: rawMaterial.amount,
           rawMaterialNewStock: rawMaterial.amount - amountInRawUnit,
         });
-
-        this.checkRawMaterialStock(
+        //TODO if need this fuction correct it
+        /* this.checkRawMaterialStock(
           rawMaterial,
           amountInRawUnit,
           rawMaterial.name,
           quantityToSell,
           craftProduct.name,
-        );
+        ); */
 
         await this.deductRawMaterialStock(
           material.rawMaterialId,

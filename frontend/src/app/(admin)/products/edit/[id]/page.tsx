@@ -16,6 +16,18 @@ interface Brand {
   name: string;
 }
 
+interface RawMaterial {
+  id: number;
+  name: string;
+  unit: string;
+}
+
+interface Service {
+  id: number;
+  name: string;
+  price: number;
+}
+
 interface Product {
   id: number;
   reference: string;
@@ -30,10 +42,29 @@ interface Product {
   priceIncludingTax: number;
   discount: number;
   vat: number;
-  fodec: number; // ADD FODEC TO INTERFACE
+  fodec: number;
   categoryId: number;
   brandId?: number;
   img?: string;
+}
+
+interface CraftProduct {
+  id: number;
+  reference: string;
+  name: string;
+  description?: string;
+  unit: string;
+  amount: number;
+  totalCost?: number;
+  salePrice?: number;
+  marginPercent: number;
+  vat: number;
+  minStock: number;
+  img?: string;
+  isActive: boolean;
+  productId?: number;
+  craftMaterials?: { rawMaterialId: number; amount: number }[];
+  craftServices?: { serviceId: number }[];
 }
 
 const fetchCategories = async (): Promise<Category[]> => {
@@ -48,14 +79,26 @@ const fetchBrands = async (): Promise<Brand[]> => {
   return response.json();
 };
 
-const fetchProduct = async (id: string): Promise<Product> => {
-  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}products/${id}`);
+const fetchRawMaterials = async (): Promise<RawMaterial[]> => {
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}raw-materials`);
+  if (!response.ok) throw new Error("Échec de la récupération des matières premières");
+  return response.json();
+};
+
+const fetchServices = async (): Promise<Service[]> => {
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}services`);
+  if (!response.ok) throw new Error("Échec de la récupération des services");
+  return response.json();
+};
+
+const fetchProduct = async (id: string): Promise<{ product?: Product; craftProduct?: CraftProduct }> => {
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}products/product-craft/${id}`);
   if (!response.ok) throw new Error("Échec de la récupération du produit");
   return response.json();
 };
 
-const updateProduct = async ({ id, data }: { id: string; data: FormData }) => {
-  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}products/${id}`, {
+const updateProductCraft = async ({ id, data }: { id: string; data: FormData }) => {
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}products/product-craft/${id}`, {
     method: "PUT",
     body: data,
   });
@@ -70,6 +113,15 @@ const vatOptions = [
   { value: 0, label: "0%" },
   { value: 7, label: "7%" },
   { value: 19, label: "19%" },
+];
+
+const unitOptions = [
+  { value: "mg", label: "mg" },
+  { value: "ml", label: "ml" },
+  { value: "g", label: "g" },
+  { value: "L", label: "L" },
+  { value: "kg", label: "kg" },
+  { value: "unit", label: "Unité" },
 ];
 
 interface PageProps {
@@ -101,6 +153,7 @@ function EditProductContent({ id }: { id: string }) {
   const router = useRouter();
 
   const [formData, setFormData] = useState({
+    // Product fields
     reference: "",
     internalCode: "",
     name: "",
@@ -113,9 +166,21 @@ function EditProductContent({ id }: { id: string }) {
     priceIncludingTax: 0,
     discount: 0,
     vat: "19",
-    fodec: 0, // ADD FODEC FIELD
+    fodec: 0,
     categoryId: "",
     brandId: "",
+    // Craft product fields
+    craftReference: "",
+    craftName: "",
+    craftDescription: "",
+    craftUnit: "kg",
+    craftAmount: 0,
+    craftMarginPercent: 30,
+    craftVat: 19,
+    craftMinStock: 5,
+    craftProductId: "",
+    craftMaterials: [] as { rawMaterialId: number; amount: number }[],
+    craftServiceIds: [] as number[],
   });
 
   const [image, setImage] = useState<File | null>(null);
@@ -125,6 +190,8 @@ function EditProductContent({ id }: { id: string }) {
   const [toastOpen, setToastOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
   const [toastType, setToastType] = useState<"success" | "error">("success");
+  const [hasCraftProduct, setHasCraftProduct] = useState(false);
+  const [craftProductId, setCraftProductId] = useState<number | null>(null);
 
   const { data: categories = [] } = useQuery({
     queryKey: ["categories"],
@@ -136,7 +203,17 @@ function EditProductContent({ id }: { id: string }) {
     queryFn: fetchBrands
   });
 
-  const { data: product, isLoading: isLoadingProduct } = useQuery({
+  const { data: rawMaterials = [] } = useQuery({
+    queryKey: ["rawMaterials"],
+    queryFn: fetchRawMaterials
+  });
+
+  const { data: services = [] } = useQuery({
+    queryKey: ["services"],
+    queryFn: fetchServices
+  });
+
+  const { data: productData, isLoading: isLoadingProduct } = useQuery({
     queryKey: ["product", id],
     queryFn: () => fetchProduct(id),
     enabled: !!id,
@@ -167,27 +244,57 @@ function EditProductContent({ id }: { id: string }) {
   }, [formData.salePrice, formData.vat]);
 
   useEffect(() => {
-    if (product) {
-      setFormData({
-        reference: product.reference || "",
-        internalCode: product.internalCode || "",
-        name: product.name,
-        description: product.description || "",
-        stock: product.stock,
-        minStock: product.minStock,
-        purchasePrice: product.purchasePrice,
-        marginPercent: product.marginPercent,
-        salePrice: product.salePrice,
-        priceIncludingTax: product.priceIncludingTax,
-        discount: product.discount,
-        vat: String(product.vat),
-        fodec: product.fodec || 0, // ADD FODEC FROM PRODUCT
-        categoryId: String(product.categoryId),
-        brandId: product.brandId ? String(product.brandId) : "",
-      });
-      setExistingImage(product.img || null);
+    if (productData) {
+      const product = productData.product;
+      const craftProduct = productData.craftProduct;
+
+      // Set product data
+      if (product) {
+        setFormData(prev => ({
+          ...prev,
+          reference: product.reference || "",
+          internalCode: product.internalCode || "",
+          name: product.name,
+          description: product.description || "",
+          stock: product.stock,
+          minStock: product.minStock,
+          purchasePrice: product.purchasePrice,
+          marginPercent: product.marginPercent,
+          salePrice: product.salePrice,
+          priceIncludingTax: product.priceIncludingTax,
+          discount: product.discount,
+          vat: String(product.vat),
+          fodec: product.fodec || 0,
+          categoryId: String(product.categoryId),
+          brandId: product.brandId ? String(product.brandId) : "",
+        }));
+        setExistingImage(product.img || null);
+      }
+
+      // Set craft product data if it exists
+      if (craftProduct) {
+        setHasCraftProduct(true);
+        setCraftProductId(craftProduct.id);
+        setFormData(prev => ({
+          ...prev,
+          craftReference: craftProduct.reference || "",
+          craftName: craftProduct.name || "",
+          craftDescription: craftProduct.description || "",
+          craftUnit: craftProduct.unit || "kg",
+          craftAmount: craftProduct.amount || 0,
+          craftMarginPercent: craftProduct.marginPercent || 30,
+          craftVat: craftProduct.vat || 19,
+          craftMinStock: craftProduct.minStock || 5,
+          craftProductId: craftProduct.productId ? String(craftProduct.productId) : "",
+          craftMaterials: craftProduct.craftMaterials?.map(m => ({
+            rawMaterialId: m.rawMaterialId,
+            amount: m.amount
+          })) || [],
+          craftServiceIds: craftProduct.craftServices?.map(s => s.serviceId) || [],
+        }));
+      }
     }
-  }, [product]);
+  }, [productData]);
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -214,7 +321,7 @@ function EditProductContent({ id }: { id: string }) {
   };
 
   const updateMutation = useMutation({
-    mutationFn: updateProduct,
+    mutationFn: updateProductCraft,
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["products"] });
       queryClient.invalidateQueries({ queryKey: ["product", id] });
@@ -227,12 +334,45 @@ function EditProductContent({ id }: { id: string }) {
     onSettled: () => setIsSubmitting(false),
   });
 
+  const handleAddMaterial = () => {
+    setFormData(prev => ({
+      ...prev,
+      craftMaterials: [...prev.craftMaterials, { rawMaterialId: 0, amount: 0 }]
+    }));
+  };
+
+  const handleRemoveMaterial = (index: number) => {
+    setFormData(prev => ({
+      ...prev,
+      craftMaterials: prev.craftMaterials.filter((_, i) => i !== index)
+    }));
+  };
+
+  const handleMaterialChange = (index: number, field: string, value: any) => {
+    const updated = [...formData.craftMaterials];
+    updated[index] = { ...updated[index], [field]: value };
+    setFormData(prev => ({ ...prev, craftMaterials: updated }));
+  };
+
+  const handleServiceToggle = (serviceId: number) => {
+    setFormData(prev => {
+      const exists = prev.craftServiceIds.includes(serviceId);
+      return {
+        ...prev,
+        craftServiceIds: exists
+          ? prev.craftServiceIds.filter(id => id !== serviceId)
+          : [...prev.craftServiceIds, serviceId]
+      };
+    });
+  };
+
   const submitForm = async (event: React.FormEvent) => {
     event.preventDefault();
     setIsSubmitting(true);
 
+    // Validate product
     if (!formData.name) {
-      showToast("Le nom est requis", "error");
+      showToast("Le nom du produit est requis", "error");
       setIsSubmitting(false);
       return;
     }
@@ -249,13 +389,69 @@ function EditProductContent({ id }: { id: string }) {
       return;
     }
 
+    if (formData.salePrice <= 0) {
+      showToast("Le prix de vente doit être positif", "error");
+      setIsSubmitting(false);
+      return;
+    }
+
+    if (formData.priceIncludingTax <= 0) {
+      showToast("Le prix TTC doit être positif", "error");
+      setIsSubmitting(false);
+      return;
+    }
+
+    // Build product data
+    const productData = {
+      id: parseInt(id),
+      reference: formData.reference,
+      internalCode: formData.internalCode,
+      name: formData.name,
+      description: formData.description,
+      stock: formData.stock,
+      minStock: formData.minStock,
+      purchasePrice: formData.purchasePrice,
+      marginPercent: formData.marginPercent,
+      salePrice: formData.salePrice,
+      priceIncludingTax: formData.priceIncludingTax,
+      discount: formData.discount,
+      vat: parseInt(formData.vat),
+      fodec: formData.fodec,
+      categoryId: parseInt(formData.categoryId),
+      brandId: formData.brandId ? parseInt(formData.brandId) : undefined,
+    };
+
+    // Build craft product data if it exists
+    let craftProductData = null;
+    if (hasCraftProduct && craftProductId) {
+      craftProductData = {
+        id: craftProductId,
+        reference: formData.craftReference,
+        name: formData.craftName,
+        description: formData.craftDescription,
+        unit: formData.craftUnit,
+        amount: formData.craftAmount,
+        marginPercent: formData.craftMarginPercent,
+        vat: formData.craftVat,
+        minStock: formData.craftMinStock,
+        productId: formData.craftProductId ? parseInt(formData.craftProductId) : undefined,
+        materials: formData.craftMaterials.filter(m => m.rawMaterialId > 0 && m.amount > 0),
+        serviceIds: formData.craftServiceIds,
+      };
+    }
+
+    // Create FormData
     const submitData = new FormData();
-    Object.entries(formData).forEach(([key, value]) => {
-      if (value !== "" && value !== null && key !== "brandId") {
-        submitData.append(key, String(value));
-      }
-    });
-    if (formData.brandId) submitData.append("brandId", formData.brandId);
+
+    // Add product as JSON string
+    submitData.append("product", JSON.stringify(productData));
+
+    // Add craft product as JSON string if it exists
+    if (craftProductData) {
+      submitData.append("craftProduct", JSON.stringify(craftProductData));
+    }
+
+    // Add image if a new one was selected
     if (image) submitData.append("image", image);
 
     updateMutation.mutate({ id, data: submitData });
@@ -286,10 +482,19 @@ function EditProductContent({ id }: { id: string }) {
           </button>
         </div>
 
+        {/* Info banner if craft product exists */}
+        {hasCraftProduct && (
+          <div className="mb-6 rounded-sm border border-green-500 bg-green-50 dark:bg-green-900/20 p-4">
+            <p className="text-sm font-medium text-green-700 dark:text-green-400">
+              ⚡ Ce produit est lié à un produit artisanal (ID: {craftProductId})
+            </p>
+          </div>
+        )}
+
         <div className="rounded-sm border border-stroke bg-white shadow-default dark:border-strokedark dark:bg-boxdark">
           <div className="border-b border-stroke px-6.5 py-4 dark:border-strokedark">
             <h3 className="text-xl font-semibold text-black dark:text-white">
-              Modifier le produit
+              Informations du produit
             </h3>
           </div>
 
@@ -375,20 +580,6 @@ function EditProductContent({ id }: { id: string }) {
                   </select>
                 </div>
 
-                {/* Stock */}
-                {/* <div>
-                  <label className="mb-3 block text-sm font-medium text-black dark:text-white">
-                    Stock
-                  </label>
-                  <input
-                    type="number"
-                    min="0"
-                    value={formData.stock}
-                    onChange={(e) => setFormData({ ...formData, stock: Number(e.target.value) })}
-                    className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
-                  />
-                </div> */}
-
                 {/* Stock minimum */}
                 <div>
                   <label className="mb-3 block text-sm font-medium text-black dark:text-white">
@@ -422,33 +613,16 @@ function EditProductContent({ id }: { id: string }) {
                   />
                 </div>
 
-                {/* Marge (%) */}
-                <div>
-                  <label className="mb-3 block text-sm font-medium text-black dark:text-white">
-                    Marge (%)
-                  </label>
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="0"
-                    value={formData.marginPercent}
-                    onChange={(e) => {
-                      setFormData({ ...formData, marginPercent: Number(e.target.value) });
-                      calculateSalePrice();
-                    }}
-                    className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
-                  />
-                </div>
-
                 {/* Prix de vente */}
                 <div>
                   <label className="mb-3 block text-sm font-medium text-black dark:text-white">
-                    Prix de vente (DT)
+                    Prix de vente (DT) <span className="text-danger">*</span>
                   </label>
                   <input
                     type="number"
                     step="0.001"
                     min="0"
+                    required
                     value={formData.salePrice}
                     onChange={(e) => setFormData({ ...formData, salePrice: Number(e.target.value) })}
                     className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
@@ -458,18 +632,19 @@ function EditProductContent({ id }: { id: string }) {
                 {/* Prix TTC */}
                 <div>
                   <label className="mb-3 block text-sm font-medium text-black dark:text-white">
-                    Prix TTC (DT)
+                    Prix TTC (DT) <span className="text-danger">*</span>
                   </label>
                   <input
                     type="number"
                     step="0.001"
+                    required
                     value={formData.priceIncludingTax}
-                    readOnly
-                    className="w-full rounded-lg border-[1.5px] border-stroke bg-gray-100 px-5 py-3 outline-none dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                    onChange={(e) => setFormData({ ...formData, priceIncludingTax: Number(e.target.value) })}
+                    className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
                   />
                 </div>
 
-                {/* FODEC - NEW FIELD */}
+                {/* FODEC */}
                 <div>
                   <label className="mb-3 block text-sm font-medium text-black dark:text-white">
                     FODEC (%)
@@ -529,14 +704,14 @@ function EditProductContent({ id }: { id: string }) {
                   Description
                 </label>
                 <textarea
-                  rows={4}
+                  rows={3}
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
                 />
               </div>
 
-              {/* Téléchargement d'image */}
+              {/* Image upload */}
               <div className="mt-6">
                 <label className="mb-3 block text-sm font-medium text-black dark:text-white">
                   Image du produit
@@ -563,7 +738,110 @@ function EditProductContent({ id }: { id: string }) {
                 )}
               </div>
 
-              {/* Boutons */}
+              {/* Craft Product Section */}
+              {hasCraftProduct && (
+                <div className="mt-8 border-t border-stroke pt-6 dark:border-strokedark">
+                  <h3 className="mb-4 text-xl font-semibold text-black dark:text-white">
+                    Informations du produit artisanal lié
+                  </h3>
+
+                  <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
+                    {/* Craft Unit */}
+                    <div>
+                      <label className="mb-3 block text-sm font-medium text-black dark:text-white">
+                        Unité <span className="text-danger">*</span>
+                      </label>
+                      <select
+                        required
+                        value={formData.craftUnit}
+                        onChange={(e) => setFormData({ ...formData, craftUnit: e.target.value })}
+                        className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                      >
+                        {unitOptions.map((unit) => (
+                          <option key={unit.value} value={unit.value}>
+                            {unit.label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Materials Section */}
+                  <div className="mt-6">
+                    <div className="flex items-center justify-between mb-3">
+                      <label className="block text-sm font-medium text-black dark:text-white">
+                        Matières premières
+                      </label>
+                      <button
+                        type="button"
+                        onClick={handleAddMaterial}
+                        className="rounded-md bg-green-600 px-3 py-1 text-sm text-white hover:bg-green-700 transition-colors"
+                      >
+                        + Ajouter
+                      </button>
+                    </div>
+
+                    {formData.craftMaterials.map((material, index) => (
+                      <div key={index} className="mb-3 flex gap-3 items-end">
+                        <div className="flex-1">
+                          <select
+                            value={material.rawMaterialId}
+                            onChange={(e) => handleMaterialChange(index, 'rawMaterialId', Number(e.target.value))}
+                            className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                          >
+                            <option value={0}>Sélectionner une matière</option>
+                            {rawMaterials.map((rm) => (
+                              <option key={rm.id} value={rm.id}>
+                                {rm.name} ({rm.unit})
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="flex-1">
+                          <input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="Quantité"
+                            value={material.amount}
+                            onChange={(e) => handleMaterialChange(index, 'amount', Number(e.target.value))}
+                            className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveMaterial(index)}
+                          className="rounded-md bg-red-600 px-3 py-3 text-white hover:bg-red-700 transition-colors"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Services Section */}
+                  <div className="mt-6">
+                    <label className="mb-3 block text-sm font-medium text-black dark:text-white">
+                      Services
+                    </label>
+                    <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
+                      {services.map((service) => (
+                        <label key={service.id} className="flex items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={formData.craftServiceIds.includes(service.id)}
+                            onChange={() => handleServiceToggle(service.id)}
+                            className="h-4 w-4 accent-blue-600"
+                          />
+                          <span className="text-sm">{service.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Submit Buttons */}
               <div className="mt-6 flex gap-4">
                 <button
                   type="button"
@@ -575,7 +853,7 @@ function EditProductContent({ id }: { id: string }) {
                 <button
                   type="submit"
                   disabled={isSubmitting}
-                  className="rounded-md border border-stroke px-6 py-3 font-medium hover:bg-gray-100 dark:hover:bg-meta-4 transition-colors"
+                  className="rounded-md bg-blue-600 px-6 py-3 font-medium text-white hover:bg-blue-700 transition-colors disabled:opacity-50"
                 >
                   {isSubmitting ? (
                     <>
@@ -583,7 +861,7 @@ function EditProductContent({ id }: { id: string }) {
                       Mise à jour...
                     </>
                   ) : (
-                    "Mettre à jour le produit"
+                    "Mettre à jour"
                   )}
                 </button>
               </div>
@@ -591,6 +869,7 @@ function EditProductContent({ id }: { id: string }) {
           </form>
         </div>
 
+        {/* Toast Notifications */}
         <Toast.Root
           open={toastOpen}
           onOpenChange={setToastOpen}

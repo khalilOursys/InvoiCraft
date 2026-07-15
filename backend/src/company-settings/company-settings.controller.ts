@@ -12,7 +12,7 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { CompanySettingsService } from './company-settings.service';
 import { UpdateCompanySettingsDto } from './dto/update-company-setting.dto';
-import { companyLogoMulter } from 'src/config/multer.config';
+import { companyLogoMulter } from '../config/multer.config';
 
 @Controller('company-settings')
 export class CompanySettingsController {

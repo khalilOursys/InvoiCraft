@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { CraftProductService } from './craft-product.service';
 import { CraftProductController } from './craft-product.controller';
-import { PrismaService } from 'src/prisma.service';
+import { PrismaService } from '../prisma.service';
 
 @Module({
   controllers: [CraftProductController],

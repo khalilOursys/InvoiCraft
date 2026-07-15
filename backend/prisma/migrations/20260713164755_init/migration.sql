@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "services" ADD COLUMN     "vat" DOUBLE PRECISION NOT NULL DEFAULT 19;

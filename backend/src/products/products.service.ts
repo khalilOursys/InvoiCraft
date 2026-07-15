@@ -1,3 +1,5 @@
+// src/products/products.service.ts
+
 import {
   Injectable,
   NotFoundException,
@@ -6,6 +8,8 @@ import {
 import { PrismaService } from '../prisma.service';
 import { CreateProductDto } from './dto/create-product.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
+import { CreateProductCraftDto } from './dto/create-product-craft.dto';
+import { UpdateProductCraftDto } from './dto/update-product-craft.dto';
 import { Prisma } from '@prisma/client';
 import { SearchProductsDto } from './dto/search-products.dto';
 
@@ -13,17 +17,17 @@ import { SearchProductsDto } from './dto/search-products.dto';
 export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  // ==================== PRODUCT METHODS ====================
+
   async create(
     createProductDto: CreateProductDto,
     imageUrl?: string,
     userId?: number,
   ) {
-    // Check if product with same reference exists (if reference is provided)
     if (createProductDto.reference) {
       const existingByRef = await this.prisma.product.findFirst({
         where: { reference: createProductDto.reference },
       });
-
       if (existingByRef) {
         throw new BadRequestException(
           `Product with reference "${createProductDto.reference}" already exists.`,
@@ -31,12 +35,10 @@ export class ProductsService {
       }
     }
 
-    // Check if product with same internal code exists (if internal code is provided)
     if (createProductDto.internalCode) {
       const existingByCode = await this.prisma.product.findFirst({
         where: { internalCode: createProductDto.internalCode },
       });
-
       if (existingByCode) {
         throw new BadRequestException(
           `Product with internal code "${createProductDto.internalCode}" already exists.`,
@@ -44,23 +46,19 @@ export class ProductsService {
       }
     }
 
-    // Check if category exists
     const category = await this.prisma.category.findUnique({
       where: { id: createProductDto.categoryId },
     });
-
     if (!category) {
       throw new BadRequestException(
         `Category with id ${createProductDto.categoryId} not found.`,
       );
     }
 
-    // Check if brand exists if brandId is provided
     if (createProductDto.brandId) {
       const brand = await this.prisma.brand.findUnique({
         where: { id: createProductDto.brandId },
       });
-
       if (!brand) {
         throw new BadRequestException(
           `Brand with id ${createProductDto.brandId} not found.`,
@@ -70,9 +68,7 @@ export class ProductsService {
 
     const initialStock = createProductDto.stock || 0;
 
-    // Create product and initial stock movement in a transaction
     return await this.prisma.$transaction(async (prisma) => {
-      // Create the product
       const product = await prisma.product.create({
         data: {
           reference: createProductDto.reference,
@@ -99,28 +95,6 @@ export class ProductsService {
         },
       });
 
-      // Create initial stock movement
-      /* const movementNumber = `INIT-${Date.now()}-${product.id}`;
-
-      await prisma.stockMovement.create({
-        data: {
-          movementNumber: movementNumber,
-          type: 'INITIAL',
-          quantity: initialStock,
-          previousStock: 0,
-          newStock: initialStock,
-          reason:
-            initialStock > 0
-              ? 'Initial inventory setup'
-              : 'Product created with zero stock',
-          status: 'COMPLETED',
-          productId: product.id,
-          createdAt: new Date(),
-          createdBy: userId || 1,
-          notes: `Initial stock: ${initialStock} units`,
-        },
-      }); */
-
       return product;
     });
   }
@@ -131,11 +105,9 @@ export class ProductsService {
     imageUrl?: string,
     userId?: number,
   ) {
-    // Check if product exists and get current stock
     const existingProduct = await this.findOne(id);
     const oldStock = existingProduct.stock;
 
-    // Check if reference is being updated to an existing reference
     if (updateProductDto.reference) {
       const existing = await this.prisma.product.findFirst({
         where: {
@@ -143,7 +115,6 @@ export class ProductsService {
           id: { not: id },
         },
       });
-
       if (existing) {
         throw new BadRequestException(
           `Product with reference "${updateProductDto.reference}" already exists.`,
@@ -151,7 +122,6 @@ export class ProductsService {
       }
     }
 
-    // Check if internal code is being updated to an existing internal code
     if (updateProductDto.internalCode) {
       const existing = await this.prisma.product.findFirst({
         where: {
@@ -159,7 +129,6 @@ export class ProductsService {
           id: { not: id },
         },
       });
-
       if (existing) {
         throw new BadRequestException(
           `Product with internal code "${updateProductDto.internalCode}" already exists.`,
@@ -167,12 +136,10 @@ export class ProductsService {
       }
     }
 
-    // Check if category exists if categoryId is provided
     if (updateProductDto.categoryId) {
       const category = await this.prisma.category.findUnique({
         where: { id: updateProductDto.categoryId },
       });
-
       if (!category) {
         throw new BadRequestException(
           `Category with id ${updateProductDto.categoryId} not found.`,
@@ -180,12 +147,10 @@ export class ProductsService {
       }
     }
 
-    // Check if brand exists if brandId is provided
     if (updateProductDto.brandId) {
       const brand = await this.prisma.brand.findUnique({
         where: { id: updateProductDto.brandId },
       });
-
       if (!brand) {
         throw new BadRequestException(
           `Brand with id ${updateProductDto.brandId} not found.`,
@@ -193,22 +158,16 @@ export class ProductsService {
       }
     }
 
-    // Prepare update data
     const updateData: any = { ...updateProductDto };
-
-    // If a new image was uploaded, add it to the update data
     if (imageUrl) {
       updateData.img = imageUrl;
     }
 
-    // Check if stock is being updated
     const newStock = updateProductDto.stock;
     const stockChanged = newStock !== undefined && newStock !== oldStock;
 
-    // Update product with transaction if stock changed
     if (stockChanged) {
       return await this.prisma.$transaction(async (prisma) => {
-        // Update the product
         const updatedProduct = await prisma.product.update({
           where: { id },
           data: {
@@ -221,14 +180,8 @@ export class ProductsService {
           },
         });
 
-        // Create stock adjustment movement
         const quantityDifference = newStock - oldStock;
         const movementNumber = `ADJ-${Date.now()}-${id}`;
-
-        const reason =
-          quantityDifference > 0
-            ? `Stock increased from ${oldStock} to ${newStock} (Added ${quantityDifference} units)`
-            : `Stock decreased from ${oldStock} to ${newStock} (Removed ${Math.abs(quantityDifference)} units)`;
 
         await prisma.stockMovement.create({
           data: {
@@ -237,20 +190,22 @@ export class ProductsService {
             quantity: Math.abs(quantityDifference),
             previousStock: oldStock,
             newStock: newStock,
-            reason: reason,
+            reason:
+              quantityDifference > 0
+                ? `Stock increased from ${oldStock} to ${newStock}`
+                : `Stock decreased from ${oldStock} to ${newStock}`,
             reference: `Manual adjustment via product update - Product ID: ${id}`,
             status: 'COMPLETED',
             productId: id,
             createdAt: new Date(),
             createdBy: userId || 1,
-            notes: `Stock manually adjusted during product update. Previous: ${oldStock}, New: ${newStock}, Difference: ${quantityDifference > 0 ? '+' : ''}${quantityDifference}`,
+            notes: `Stock manually adjusted during product update. Previous: ${oldStock}, New: ${newStock}`,
           },
         });
 
         return updatedProduct;
       });
     } else {
-      // No stock change, just update normally
       if (Object.keys(updateData).length > 0) {
         return await this.prisma.product.update({
           where: { id },
@@ -261,7 +216,6 @@ export class ProductsService {
           },
         });
       }
-
       return existingProduct;
     }
   }
@@ -331,10 +285,8 @@ export class ProductsService {
   }
 
   async remove(id: number) {
-    // Check if product exists
     const product = await this.findOne(id);
 
-    // Check if product has invoice items
     if (
       (product.purchaseInvoiceItems &&
         product.purchaseInvoiceItems.length > 0) ||
@@ -377,7 +329,6 @@ export class ProductsService {
         },
       });
 
-      // Create stock movement
       const movementNumber = `${operation === 'increment' ? 'INC' : 'DEC'}-${Date.now()}-${id}`;
       const movementType = operation === 'increment' ? 'INBOUND' : 'OUTBOUND';
 
@@ -423,7 +374,6 @@ export class ProductsService {
     const quantityDifference = newStock - oldStock;
 
     return await this.prisma.$transaction(async (prisma) => {
-      // Update product stock
       const updatedProduct = await prisma.product.update({
         where: { id },
         data: {
@@ -436,7 +386,6 @@ export class ProductsService {
         },
       });
 
-      // Create stock movement
       const movementNumber = `ADJ-${Date.now()}-${id}`;
 
       await prisma.stockMovement.create({
@@ -453,7 +402,7 @@ export class ProductsService {
           productId: id,
           createdAt: new Date(),
           createdBy: userId,
-          notes: `Stock changed from ${oldStock} to ${newStock}. Difference: ${quantityDifference > 0 ? '+' : ''}${quantityDifference}`,
+          notes: `Stock changed from ${oldStock} to ${newStock}`,
         },
       });
 
@@ -474,10 +423,8 @@ export class ProductsService {
       sortOrder = 'desc',
     } = searchParams;
 
-    // Build where clause
     const where: Prisma.ProductWhereInput = {};
 
-    // Text search (optional - search in name, reference, description)
     if (search) {
       where.OR = [
         { name: { contains: search, mode: 'insensitive' } },
@@ -487,47 +434,37 @@ export class ProductsService {
       ];
     }
 
-    // Filter by brand names
     if (brandNames) {
       const brandsArray = Array.isArray(brandNames) ? brandNames : [brandNames];
-
       where.brand = {
         name: { in: brandsArray, mode: 'insensitive' },
       };
     }
 
-    // Filter by category names
     if (categoryNames) {
       const categoriesArray = Array.isArray(categoryNames)
         ? categoryNames
         : [categoryNames];
-
       where.category = {
         name: { in: categoriesArray, mode: 'insensitive' },
       };
     }
 
-    // Filter by price range (using salePrice)
     if (minPrice !== undefined || maxPrice !== undefined) {
       where.salePrice = {};
-
       if (minPrice !== undefined) {
         where.salePrice.gte = minPrice;
       }
-
       if (maxPrice !== undefined) {
         where.salePrice.lte = maxPrice;
       }
     }
 
-    // Calculate pagination
     const skip = (page - 1) * limit;
     const take = limit;
 
-    // Get total count for pagination
     const totalCount = await this.prisma.product.count({ where });
 
-    // Get products with pagination and sorting
     const products = await this.prisma.product.findMany({
       where,
       skip,
@@ -562,12 +499,11 @@ export class ProductsService {
   }
 
   async getFilterOptions() {
-    // Get all brands with product counts
     const brands = await this.prisma.brand.findMany({
       where: {
         isActive: true,
         products: {
-          some: {}, // Only include brands that have at least one product
+          some: {},
         },
       },
       include: {
@@ -582,11 +518,10 @@ export class ProductsService {
       },
     });
 
-    // Get all categories with product counts
     const categories = await this.prisma.category.findMany({
       where: {
         products: {
-          some: {}, // Only include brands that have at least one product
+          some: {},
         },
       },
       include: {
@@ -601,7 +536,6 @@ export class ProductsService {
       },
     });
 
-    // Get price range from all products
     const priceAggregation = await this.prisma.product.aggregate({
       _min: {
         salePrice: true,
@@ -627,6 +561,547 @@ export class ProductsService {
         minPrice: priceAggregation._min.salePrice || 0,
         maxPrice: priceAggregation._max.salePrice || 1000,
       },
+    };
+  }
+
+  // ==================== PRODUCT CRAFT METHODS ====================
+
+  async createProductCraft(
+    data: CreateProductCraftDto,
+    imageUrl?: string,
+    userId: number = 1,
+  ) {
+    const result: any = {};
+
+    return await this.prisma.$transaction(async (prisma) => {
+      // Handle Product creation
+      if (data.product) {
+        if (data.product.reference) {
+          const existingByRef = await prisma.product.findFirst({
+            where: { reference: data.product.reference },
+          });
+          if (existingByRef) {
+            throw new BadRequestException(
+              `Product with reference "${data.product.reference}" already exists.`,
+            );
+          }
+        }
+
+        if (data.product.internalCode) {
+          const existingByCode = await prisma.product.findFirst({
+            where: { internalCode: data.product.internalCode },
+          });
+          if (existingByCode) {
+            throw new BadRequestException(
+              `Product with internal code "${data.product.internalCode}" already exists.`,
+            );
+          }
+        }
+
+        const category = await prisma.category.findUnique({
+          where: { id: data.product.categoryId },
+        });
+        if (!category) {
+          throw new BadRequestException(
+            `Category with id ${data.product.categoryId} not found.`,
+          );
+        }
+
+        const product = await prisma.product.create({
+          data: {
+            ...data.product,
+            img: imageUrl || data.product.img,
+            lastStockUpdate: (data.product.stock || 0) > 0 ? new Date() : null,
+          },
+          include: {
+            category: true,
+            brand: true,
+          },
+        });
+
+        result.product = product;
+      }
+
+      // Handle CraftProduct creation
+      if (data.craftProduct) {
+        if (data.craftProduct.reference) {
+          const existingByRef = await prisma.craftProduct.findFirst({
+            where: { reference: data.craftProduct.reference },
+          });
+          if (existingByRef) {
+            throw new BadRequestException(
+              `CraftProduct with reference "${data.craftProduct.reference}" already exists.`,
+            );
+          }
+        }
+
+        const craftProductData = { ...data.craftProduct };
+        delete (craftProductData as any).materials;
+        delete (craftProductData as any).serviceIds;
+
+        const craftProduct = await prisma.craftProduct.create({
+          data: {
+            ...craftProductData,
+            img: imageUrl || craftProductData.img,
+            productId:
+              data.craftProduct.productId || result.product?.id || null,
+          },
+        });
+
+        if (
+          data.craftProduct.materials &&
+          data.craftProduct.materials.length > 0
+        ) {
+          for (const material of data.craftProduct.materials) {
+            const rawMaterial = await prisma.rawMaterial.findUnique({
+              where: { id: material.rawMaterialId },
+            });
+            if (!rawMaterial) {
+              throw new BadRequestException(
+                `Raw material with id ${material.rawMaterialId} not found`,
+              );
+            }
+
+            await prisma.craftProductMaterial.create({
+              data: {
+                craftProductId: craftProduct.id,
+                rawMaterialId: material.rawMaterialId,
+                amount: material.amount,
+              },
+            });
+          }
+        }
+
+        if (
+          data.craftProduct.serviceIds &&
+          data.craftProduct.serviceIds.length > 0
+        ) {
+          for (const serviceId of data.craftProduct.serviceIds) {
+            const serviceExists = await prisma.service.findUnique({
+              where: { id: serviceId },
+            });
+            if (!serviceExists) {
+              throw new BadRequestException(
+                `Service with id ${serviceId} not found`,
+              );
+            }
+
+            await prisma.craftProductService.create({
+              data: {
+                craftProductId: craftProduct.id,
+                serviceId: serviceId,
+              },
+            });
+          }
+        }
+
+        const completeCraftProduct = await prisma.craftProduct.findUnique({
+          where: { id: craftProduct.id },
+          include: {
+            product: {
+              include: {
+                category: true,
+                brand: true,
+              },
+            },
+            craftMaterials: {
+              include: {
+                rawMaterial: true,
+              },
+            },
+            craftServices: {
+              include: {
+                service: true,
+              },
+            },
+          },
+        });
+
+        result.craftProduct = completeCraftProduct;
+      }
+
+      return result;
+    });
+  }
+
+  // src/products/products.service.ts
+
+  async updateProductCraft(
+    id: number, // This is now the PRODUCT ID
+    data: UpdateProductCraftDto,
+    imageUrl?: string,
+    userId: number = 1,
+  ) {
+    const result: any = {};
+
+    return await this.prisma.$transaction(async (prisma) => {
+      // First, find the product by ID
+      const existingProduct = await prisma.product.findUnique({
+        where: { id: id },
+        include: {
+          category: true,
+          brand: true,
+        },
+      });
+
+      if (!existingProduct) {
+        throw new NotFoundException(`Product with id ${id} not found`);
+      }
+
+      // Check if this product is linked to a craft product
+      const existingCraftProduct = await prisma.craftProduct.findFirst({
+        where: {
+          productId: id,
+        },
+        include: {
+          craftMaterials: {
+            include: {
+              rawMaterial: true,
+            },
+          },
+          craftServices: {
+            include: {
+              service: true,
+            },
+          },
+        },
+      });
+
+      // Handle Product update
+      if (data.product) {
+        // Check reference uniqueness
+        if (data.product.reference) {
+          const existing = await prisma.product.findFirst({
+            where: {
+              reference: data.product.reference,
+              id: { not: id },
+            },
+          });
+          if (existing) {
+            throw new BadRequestException(
+              `Product with reference "${data.product.reference}" already exists.`,
+            );
+          }
+        }
+
+        // Check internal code uniqueness
+        if (data.product.internalCode) {
+          const existing = await prisma.product.findFirst({
+            where: {
+              internalCode: data.product.internalCode,
+              id: { not: id },
+            },
+          });
+          if (existing) {
+            throw new BadRequestException(
+              `Product with internal code "${data.product.internalCode}" already exists.`,
+            );
+          }
+        }
+
+        const updateData = { ...data.product };
+
+        const updatedProduct = await prisma.product.update({
+          where: { id: id },
+          data: {
+            ...updateData,
+            img: imageUrl || updateData.img,
+            lastStockUpdate:
+              updateData.stock !== undefined &&
+              updateData.stock !== existingProduct.stock
+                ? new Date()
+                : undefined,
+          },
+          include: {
+            category: true,
+            brand: true,
+          },
+        });
+
+        // Create stock movement if stock changed
+        if (
+          updateData.stock !== undefined &&
+          updateData.stock !== existingProduct.stock
+        ) {
+          const oldStock = existingProduct.stock;
+          const newStock = updateData.stock;
+          const quantityDifference = newStock - oldStock;
+          const movementNumber = `ADJ-${Date.now()}-${updatedProduct.id}`;
+
+          await prisma.stockMovement.create({
+            data: {
+              movementNumber: movementNumber,
+              type: 'ADJUSTMENT',
+              quantity: Math.abs(quantityDifference),
+              previousStock: oldStock,
+              newStock: newStock,
+              reason:
+                quantityDifference > 0
+                  ? `Stock increased from ${oldStock} to ${newStock}`
+                  : `Stock decreased from ${oldStock} to ${newStock}`,
+              reference: `Manual adjustment via API`,
+              status: 'COMPLETED',
+              productId: updatedProduct.id,
+              createdAt: new Date(),
+              createdBy: userId,
+              notes: `Stock manually adjusted during product update. Previous: ${oldStock}, New: ${newStock}`,
+            },
+          });
+        }
+
+        result.product = updatedProduct;
+      }
+
+      // Handle CraftProduct update if it exists
+      if (existingCraftProduct) {
+        // Only update craft product if craftProduct data is provided
+        if (data.craftProduct) {
+          // Check reference uniqueness
+          if (data.craftProduct.reference) {
+            const existing = await prisma.craftProduct.findFirst({
+              where: {
+                reference: data.craftProduct.reference,
+                id: { not: existingCraftProduct.id },
+              },
+            });
+            if (existing) {
+              throw new BadRequestException(
+                `CraftProduct with reference "${data.craftProduct.reference}" already exists.`,
+              );
+            }
+          }
+
+          const craftUpdateData = { ...data.craftProduct };
+          delete (craftUpdateData as any).materials;
+          delete (craftUpdateData as any).serviceIds;
+
+          await prisma.craftProduct.update({
+            where: { id: existingCraftProduct.id },
+            data: {
+              ...craftUpdateData,
+              img: imageUrl || craftUpdateData.img,
+            },
+          });
+
+          // Update materials if provided
+          if (data.craftProduct.materials) {
+            await prisma.craftProductMaterial.deleteMany({
+              where: { craftProductId: existingCraftProduct.id },
+            });
+
+            for (const material of data.craftProduct.materials) {
+              const rawMaterial = await prisma.rawMaterial.findUnique({
+                where: { id: material.rawMaterialId },
+              });
+              if (!rawMaterial) {
+                throw new BadRequestException(
+                  `Raw material with id ${material.rawMaterialId} not found`,
+                );
+              }
+
+              await prisma.craftProductMaterial.create({
+                data: {
+                  craftProductId: existingCraftProduct.id,
+                  rawMaterialId: material.rawMaterialId,
+                  amount: material.amount,
+                },
+              });
+            }
+          }
+
+          // Update services if provided
+          if (data.craftProduct.serviceIds) {
+            await prisma.craftProductService.deleteMany({
+              where: { craftProductId: existingCraftProduct.id },
+            });
+
+            for (const serviceId of data.craftProduct.serviceIds) {
+              const serviceExists = await prisma.service.findUnique({
+                where: { id: serviceId },
+              });
+              if (!serviceExists) {
+                throw new BadRequestException(
+                  `Service with id ${serviceId} not found`,
+                );
+              }
+
+              await prisma.craftProductService.create({
+                data: {
+                  craftProductId: existingCraftProduct.id,
+                  serviceId: serviceId,
+                },
+              });
+            }
+          }
+        }
+
+        // Fetch the complete updated craft product with all relations
+        const completeCraftProduct = await prisma.craftProduct.findUnique({
+          where: { id: existingCraftProduct.id },
+          include: {
+            product: {
+              include: {
+                category: true,
+                brand: true,
+              },
+            },
+            craftMaterials: {
+              include: {
+                rawMaterial: true,
+              },
+            },
+            craftServices: {
+              include: {
+                service: true,
+              },
+            },
+          },
+        });
+
+        result.craftProduct = completeCraftProduct;
+      } else {
+        // If no craft product exists but craftProduct data is provided, create it
+        if (data.craftProduct) {
+          // Check reference uniqueness
+          if (data.craftProduct.reference) {
+            const existing = await prisma.craftProduct.findFirst({
+              where: {
+                reference: data.craftProduct.reference,
+              },
+            });
+            if (existing) {
+              throw new BadRequestException(
+                `CraftProduct with reference "${data.craftProduct.reference}" already exists.`,
+              );
+            }
+          }
+
+          const craftCreateData = { ...data.craftProduct };
+          delete (craftCreateData as any).materials;
+          delete (craftCreateData as any).serviceIds;
+
+          const newCraftProduct = await prisma.craftProduct.create({
+            data: {
+              ...craftCreateData,
+              img: imageUrl || craftCreateData.img,
+              productId: id, // Link to the product
+            },
+          });
+
+          // Add materials if provided
+          if (data.craftProduct.materials) {
+            for (const material of data.craftProduct.materials) {
+              const rawMaterial = await prisma.rawMaterial.findUnique({
+                where: { id: material.rawMaterialId },
+              });
+              if (!rawMaterial) {
+                throw new BadRequestException(
+                  `Raw material with id ${material.rawMaterialId} not found`,
+                );
+              }
+
+              await prisma.craftProductMaterial.create({
+                data: {
+                  craftProductId: newCraftProduct.id,
+                  rawMaterialId: material.rawMaterialId,
+                  amount: material.amount,
+                },
+              });
+            }
+          }
+
+          // Add services if provided
+          if (data.craftProduct.serviceIds) {
+            for (const serviceId of data.craftProduct.serviceIds) {
+              const serviceExists = await prisma.service.findUnique({
+                where: { id: serviceId },
+              });
+              if (!serviceExists) {
+                throw new BadRequestException(
+                  `Service with id ${serviceId} not found`,
+                );
+              }
+
+              await prisma.craftProductService.create({
+                data: {
+                  craftProductId: newCraftProduct.id,
+                  serviceId: serviceId,
+                },
+              });
+            }
+          }
+
+          // Fetch the complete craft product with all relations
+          const completeCraftProduct = await prisma.craftProduct.findUnique({
+            where: { id: newCraftProduct.id },
+            include: {
+              product: {
+                include: {
+                  category: true,
+                  brand: true,
+                },
+              },
+              craftMaterials: {
+                include: {
+                  rawMaterial: true,
+                },
+              },
+              craftServices: {
+                include: {
+                  service: true,
+                },
+              },
+            },
+          });
+
+          result.craftProduct = completeCraftProduct;
+        } else {
+          // No craft product exists and no craft data provided
+          result.craftProduct = null;
+        }
+      }
+
+      return result;
+    });
+  }
+
+  async getProductWithCraft(id: number) {
+    // First, get the product
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      include: {
+        category: true,
+        brand: true,
+      },
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Product with id ${id} not found.`);
+    }
+
+    // Check if this product is linked to a craft product
+    const craftProduct = await this.prisma.craftProduct.findFirst({
+      where: {
+        productId: id,
+      },
+      include: {
+        craftMaterials: {
+          include: {
+            rawMaterial: true,
+          },
+        },
+        craftServices: {
+          include: {
+            service: true,
+          },
+        },
+      },
+    });
+
+    // Return both product and craft product (if exists)
+    return {
+      product,
+      craftProduct: craftProduct || null,
     };
   }
 }

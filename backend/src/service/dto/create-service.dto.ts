@@ -24,8 +24,9 @@ export class CreateServiceDto {
   @Min(0)
   price: number;
 
-  /* @IsNumber()
+  @IsOptional()
+  @IsNumber()
   @Min(0)
   @Max(100)
-  vat: number; */
+  vat?: number;
 }

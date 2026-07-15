@@ -1,7 +1,7 @@
 import { Module } from '@nestjs/common';
 import { RefundInvoiceService } from './refund-invoice.service';
 import { SaleRefundController } from './refund-invoice.controller';
-import { PrismaModule } from 'src/prisma/prisma.module';
+import { PrismaModule } from '../prisma/prisma.module';
 
 @Module({
   imports: [PrismaModule],

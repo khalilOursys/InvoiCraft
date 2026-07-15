@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { CreateHeroBannerDto } from './dto/create-hero-banner.dto';
 import { UpdateHeroBannerDto } from './dto/update-hero-banner.dto';
-import { PrismaService } from 'src/prisma.service';
+import { PrismaService } from '../prisma.service';
 
 @Injectable()
 export class HeroBannerService {
