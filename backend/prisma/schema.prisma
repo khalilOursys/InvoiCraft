@@ -81,6 +81,22 @@ enum InventoryCountingStatus {
   CANCELLED
 }
 
+// Enums for Production Order
+enum ProductionOrderStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  ON_HOLD
+}
+
+enum ProductionOrderPriority {
+  LOW
+  MEDIUM
+  HIGH
+  URGENT
+}
+
 //////////////////////////////////////
 // BASE MODELS
 //////////////////////////////////////
@@ -257,6 +273,7 @@ model Product {
   transferItems        StockTransferItem[]
   
   craftProducts CraftProduct[]
+  productionOrders ProductionOrder[]
 }
 
 model CraftProduct {
@@ -325,7 +342,8 @@ model RawMaterial {
   createdAt       DateTime                 @default(now())
   updatedAt       DateTime                 @updatedAt
   
-  craftMaterials  CraftProductMaterial[]   // Junction table for craft products
+  craftMaterials  CraftProductMaterial[]
+  productionOrderMaterials ProductionOrderMaterial[]
   
   @@map("raw_materials")
 }
@@ -343,10 +361,72 @@ model Service {
   updatedAt       DateTime                 @updatedAt
   
   craftServices   CraftProductService[]
+  productionOrderServices ProductionOrderService[]
   saleInvoices  SaleInvoiceService[]
   
   @@map("services")
 }
+
+// Production Order Model
+model ProductionOrder {
+  id               Int                      @id @default(autoincrement())
+  unit             String                   // mg, ml, g, L, kg, unit
+  amount           Float                    @default(0)// Current stock amount
+  totalCost        Float?                   // Calculated total cost
+  salePrice        Float?                   // Calculated sale price
+  marginPercent    Float                    @default(30)
+  vat              Float                    @default(19)
+  isActive         Boolean                  @default(true)
+  productId        Int?                     
+  createdAt        DateTime                 @default(now())
+  updatedAt        DateTime                 @updatedAt
+  
+  // Production Order specific fields
+  orderDate        DateTime                 @default(now())
+  expectedDelivery DateTime?
+  status           ProductionOrderStatus    @default(PENDING)
+  priority         ProductionOrderPriority  @default(MEDIUM)
+  notes            String?
+  completedAt      DateTime?
+  cancelledAt      DateTime?
+  quantityProduced Float?                   // Actual quantity produced
+  wasteAmount      Float?                   // Waste/Scrap amount
+  
+  // Relations
+  product          Product?                 @relation(fields: [productId], references: [id])
+  productionOrderMaterials ProductionOrderMaterial[]   // Junction table for materials
+  productionOrderServices  ProductionOrderService[]    // Junction table for services
+  
+  @@map("production_orders")
+}
+
+// Junction table for ProductionOrder <-> RawMaterial (many-to-many)
+model ProductionOrderMaterial {
+  id                  Int              @id @default(autoincrement())
+  productionOrderId   Int
+  rawMaterialId       Int
+  amount              Float            // Amount of raw material needed
+  
+  productionOrder     ProductionOrder  @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  rawMaterial         RawMaterial      @relation(fields: [rawMaterialId], references: [id])
+  
+  @@unique([productionOrderId, rawMaterialId])
+  @@map("production_order_materials")
+}
+
+// Junction table for ProductionOrder <-> Service (many-to-many)
+model ProductionOrderService {
+  id                  Int              @id @default(autoincrement())
+  productionOrderId   Int
+  serviceId           Int
+  
+  productionOrder     ProductionOrder  @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
+  service             Service          @relation(fields: [serviceId], references: [id])
+  
+  @@unique([productionOrderId, serviceId])
+  @@map("production_order_services")
+}
+
 //////////////////////////////////////
 // PURCHASE INVOICE MODELS
 //////////////////////////////////////

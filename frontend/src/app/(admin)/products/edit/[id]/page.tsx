@@ -190,7 +190,7 @@ function EditProductContent({ id }: { id: string }) {
   const [toastOpen, setToastOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
   const [toastType, setToastType] = useState<"success" | "error">("success");
-  const [hasCraftProduct, setHasCraftProduct] = useState(false);
+  const [hasCraftProduct, setHasCraftProduct] = useState(true);
   const [craftProductId, setCraftProductId] = useState<number | null>(null);
 
   const { data: categories = [] } = useQuery({
