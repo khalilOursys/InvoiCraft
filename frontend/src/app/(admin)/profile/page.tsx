@@ -289,7 +289,7 @@ export default function ProfilePage() {
         <Toast.Provider>
             <div className="p-6 min-h-screen bg-gray-50 dark:bg-gray-900">
                 {/* Header */}
-                <div className="flex items-center justify-between mb-6">
+                {/* <div className="flex items-center justify-between mb-6">
                     <button
                         onClick={handleBack}
                         className="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 transition-colors flex items-center gap-2"
@@ -300,7 +300,18 @@ export default function ProfilePage() {
                     <h1 className="text-2xl font-bold text-black dark:text-white">
                         Profile Settings
                     </h1>
-                    <div className="w-32"></div> {/* Spacer for alignment */}
+                    <div className="w-32"></div> 
+                </div> */}
+                <div className="flex items-center justify-between mb-6">
+                    <button
+                        onClick={handleBack}
+                        className="rounded-md  px-4 py-2 text-white hover:bg-blue-700 transition-colors flex items-center gap-2"
+                    >
+                    </button>
+                    <h1 className="text-2xl font-bold text-black dark:text-white">
+                        Profile Settings
+                    </h1>
+                    <div className="w-32"></div>
                 </div>
 
                 <div className="space-y-6">

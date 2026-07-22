@@ -2,12 +2,19 @@
 import { useState, useEffect } from "react";
 import * as Dialog from "@radix-ui/react-dialog";
 import * as Toast from "@radix-ui/react-toast";
-import { X, Plus, Trash2, Package, AlertCircle } from "lucide-react";
+import { X, Package, AlertCircle } from "lucide-react";
 
 type Material = {
     id: number;
     name: string;
-    unit: string;
+    unit: {
+        id: number;
+        code: string;
+        name: string;
+        symbol: string;
+        family: string;
+    };
+    unitId: number;
     amount: number;
     purchasePrice: number;
 };
@@ -22,13 +29,28 @@ type Service = {
 type CraftProduct = {
     id: number;
     name: string;
-    unit: string;
+    unitId: number;
+    unit: {
+        id: number;
+        code: string;
+        name: string;
+        symbol: string;
+        family: string;
+    };
     amount: number;
     totalCost: number;
     salePrice: number;
     craftMaterials: {
         id: number;
         amount: number;
+        unitId: number;
+        unit: {
+            id: number;
+            code: string;
+            name: string;
+            symbol: string;
+            family: string;
+        };
         rawMaterial: Material;
     }[];
     craftServices: {
@@ -37,13 +59,21 @@ type CraftProduct = {
     }[];
 };
 
+type Unit = {
+    id: number;
+    code: string;
+    name: string;
+    symbol: string;
+    family: string;
+};
+
 type ProductionOrderData = {
-    unit: string;
+    unitId: number;
     amount: number;
     productId: number;
     marginPercent: number;
     vat: number;
-    materials: { rawMaterialId: number; amount: number }[];
+    materials: { rawMaterialId: number; amount: number; unitId: number }[];
     serviceIds: number[];
     priority: "LOW" | "MEDIUM" | "HIGH" | "URGENT";
     notes?: string;
@@ -73,6 +103,7 @@ export default function ProductionOrderDialog({
     const [toastOpen, setToastOpen] = useState(false);
     const [toastMsg, setToastMsg] = useState("");
     const [toastType, setToastType] = useState<"success" | "error">("success");
+    const [productData, setProductData] = useState<any>(null);
 
     // Production Order Form State
     const [formData, setFormData] = useState<Partial<ProductionOrderData>>({
@@ -95,29 +126,34 @@ export default function ProductionOrderDialog({
         setToastOpen(true);
     };
 
-    // Fetch craft products for this product
+    // Fetch product with craft products
     useEffect(() => {
         if (open && productId) {
-            fetchCraftProducts();
+            fetchProductWithCrafts();
         }
     }, [open, productId]);
 
-    const fetchCraftProducts = async () => {
+    const fetchProductWithCrafts = async () => {
         setIsLoading(true);
         try {
+            // Fetch product with all craft products and their relations
             const res = await fetch(
-                `${process.env.NEXT_PUBLIC_API_URL}craft-products/product/${productId}`
+                `${process.env.NEXT_PUBLIC_API_URL}products/${productId}`
             );
-            if (!res.ok) throw new Error("Failed to fetch craft products");
+            if (!res.ok) throw new Error("Failed to fetch product data");
             const data = await res.json();
-            setCraftProducts(data);
+            setProductData(data);
+
+            // Extract craft products from the product data
+            const crafts = data.craftProducts || [];
+            setCraftProducts(crafts);
 
             // Auto-select first craft product if available
-            if (data.length > 0) {
-                setSelectedCraftProduct(data[0]);
+            if (crafts.length > 0) {
+                setSelectedCraftProduct(crafts[0]);
                 // Initialize material quantities
                 const quantities: { [key: number]: number } = {};
-                data[0].craftMaterials.forEach((m) => {
+                crafts[0].craftMaterials.forEach((m: any) => {
                     quantities[m.rawMaterial.id] = m.amount;
                 });
                 setMaterialQuantities(quantities);
@@ -125,16 +161,18 @@ export default function ProductionOrderDialog({
                 // Set form data with materials and services from craft product
                 setFormData((prev) => ({
                     ...prev,
-                    unit: data[0].unit,
-                    materials: data[0].craftMaterials.map((m) => ({
+                    unitId: crafts[0].unitId,
+                    materials: crafts[0].craftMaterials.map((m: any) => ({
                         rawMaterialId: m.rawMaterial.id,
                         amount: m.amount,
+                        unitId: m.unitId,
                     })),
-                    serviceIds: data[0].craftServices.map((s) => s.service.id),
+                    serviceIds: crafts[0].craftServices.map((s: any) => s.service.id),
                 }));
             }
         } catch (error) {
-            showToast("Failed to load craft products", "error");
+            console.error("Error fetching product:", error);
+            showToast("Failed to load product data", "error");
         } finally {
             setIsLoading(false);
         }
@@ -152,10 +190,11 @@ export default function ProductionOrderDialog({
 
         setFormData({
             ...formData,
-            unit: craftProduct.unit,
+            unitId: craftProduct.unitId,
             materials: craftProduct.craftMaterials.map((m) => ({
                 rawMaterialId: m.rawMaterial.id,
                 amount: m.amount,
+                unitId: m.unitId,
             })),
             serviceIds: craftProduct.craftServices.map((s) => s.service.id),
         });
@@ -191,12 +230,18 @@ export default function ProductionOrderDialog({
                 ...formData,
                 productId,
                 amount: formData.amount || 1,
-                // Ensure materials have updated quantities
+                // Ensure materials have updated quantities and unitIds
                 materials: Object.entries(materialQuantities).map(
-                    ([rawMaterialId, amount]) => ({
-                        rawMaterialId: parseInt(rawMaterialId),
-                        amount,
-                    })
+                    ([rawMaterialId, amount]) => {
+                        const material = selectedCraftProduct.craftMaterials.find(
+                            (m) => m.rawMaterial.id === parseInt(rawMaterialId)
+                        );
+                        return {
+                            rawMaterialId: parseInt(rawMaterialId),
+                            amount,
+                            unitId: material?.unitId || 0,
+                        };
+                    }
                 ),
             };
 
@@ -296,7 +341,7 @@ export default function ProductionOrderDialog({
                                                         {cp.name || `Craft #${cp.id}`}
                                                     </div>
                                                     <div className="text-sm text-gray-500 dark:text-gray-400">
-                                                        Unit: {cp.unit} | Stock: {cp.amount}
+                                                        Unit: {cp.unit?.symbol || 'N/A'} | Stock: {cp.amount}
                                                     </div>
                                                 </button>
                                             ))}
@@ -321,7 +366,7 @@ export default function ProductionOrderDialog({
                                                                     {m.rawMaterial.name}
                                                                 </div>
                                                                 <div className="text-sm text-gray-500 dark:text-gray-400">
-                                                                    Unit: {m.rawMaterial.unit} | Available:{" "}
+                                                                    Unit: {m.rawMaterial.unit?.symbol || 'N/A'} | Available:{" "}
                                                                     {m.rawMaterial.amount}
                                                                 </div>
                                                             </div>
@@ -343,7 +388,7 @@ export default function ProductionOrderDialog({
                                                                     className="w-20 px-2 py-1 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                                                                 />
                                                                 <span className="text-sm text-gray-500 dark:text-gray-400">
-                                                                    {m.rawMaterial.unit}
+                                                                    {m.unit?.symbol || 'N/A'}
                                                                 </span>
                                                             </div>
                                                         </div>
@@ -404,6 +449,11 @@ export default function ProductionOrderDialog({
                                                             }
                                                             className="w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                                                         />
+                                                        {selectedCraftProduct.unit && (
+                                                            <span className="text-xs text-gray-500 dark:text-gray-400">
+                                                                Unit: {selectedCraftProduct.unit.symbol}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                     <div>
                                                         <label className="block text-sm text-gray-600 dark:text-gray-400 mb-1">

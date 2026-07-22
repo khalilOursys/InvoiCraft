@@ -7,7 +7,6 @@ import {
   Min,
   Max,
   IsInt,
-  IsIn,
   IsArray,
   ValidateNested,
   IsBoolean,
@@ -24,6 +23,10 @@ export class CreateCraftProductMaterialDto {
   @Min(0)
   @IsNotEmpty()
   amount: number;
+
+  @IsInt()
+  @IsNotEmpty()
+  unitId: number; // Added unitId for the material
 }
 
 export class CreateProductDto {
@@ -105,11 +108,13 @@ export class CreateCraftProductDto {
   @IsString()
   description?: string;
 
-  @IsIn(['mg', 'ml', 'g', 'L', 'kg', 'unit'])
-  unit: string;
+  @IsInt()
+  @IsNotEmpty()
+  unitId: number; // Changed from optional to required
 
   @IsNumber()
   @Min(0)
+  @IsNotEmpty()
   amount: number;
 
   @IsOptional()
@@ -129,16 +134,19 @@ export class CreateCraftProductDto {
 
   @IsNumber()
   @Min(0)
+  @IsNotEmpty()
   marginPercent: number;
 
   @IsNumber()
   @Min(0)
   @Max(100)
+  @IsNotEmpty()
   vat: number;
 
   @IsNumber()
   @Min(0)
-  minStock: number;
+  @IsOptional()
+  minStock?: number;
 
   @IsOptional()
   @IsString()

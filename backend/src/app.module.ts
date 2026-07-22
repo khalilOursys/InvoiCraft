@@ -21,9 +21,9 @@ import { OrderModule } from './order/order.module';
 import { InventoryModule } from './inventory/inventory.module';
 import { RawMaterialModule } from './raw-material/raw-material.module';
 import { ServiceModule } from './service/service.module';
-import { CraftProductModule } from './craft-product/craft-product.module';
 import { ExpenseModule } from './expense/expense.module';
 import { ProductionOrderModule } from './production-order/production-order.module';
+import { UnitModule } from './unit/unit.module';
 
 @Module({
   imports: [
@@ -48,9 +48,9 @@ import { ProductionOrderModule } from './production-order/production-order.modul
     DriverModule,
     RawMaterialModule,
     ServiceModule,
-    CraftProductModule,
     ExpenseModule,
     ProductionOrderModule,
+    UnitModule,
   ],
   controllers: [AppController],
   providers: [PrismaService],

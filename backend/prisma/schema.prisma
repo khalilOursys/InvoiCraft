@@ -81,7 +81,6 @@ enum InventoryCountingStatus {
   CANCELLED
 }
 
-// Enums for Production Order
 enum ProductionOrderStatus {
   PENDING
   IN_PROGRESS
@@ -95,6 +94,49 @@ enum ProductionOrderPriority {
   MEDIUM
   HIGH
   URGENT
+}
+
+//////////////////////////////////////
+// UNIT MANAGEMENT
+//////////////////////////////////////
+
+model Unit {
+  id          Int       @id @default(autoincrement())
+  code        String    @unique
+  name        String
+  symbol      String
+  description String?
+  
+  // Unit family: "volume", "weight", "unit"
+  family      String    @default("unit")
+  
+  // Base unit relationship
+  baseUnitId  Int?
+  baseUnit    Unit?     @relation("BaseUnitRelation", fields: [baseUnitId], references: [id])
+  
+  // Conversion factor to base unit (e.g., 1000 for ml to L)
+  conversionToBase Float   @default(1)
+  
+  // Whether this is a standard unit or custom
+  isStandard  Boolean   @default(true)
+  isActive    Boolean   @default(true)
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  
+  // Relations
+  rawMaterials     RawMaterial[]     @relation("RawMaterialUnit")
+  craftProducts    CraftProduct[]    @relation("CraftProductUnit")
+  productionOrders ProductionOrder[] @relation("ProductionOrderUnit")
+  
+  // Sub-units (if this is a base unit)
+  subUnits    Unit[]    @relation("BaseUnitRelation")
+  
+  // Material relations
+  craftProductMaterials CraftProductMaterial[] @relation("CraftProductMaterialUnit")
+  productionOrderMaterials ProductionOrderMaterial[] @relation("ProductionOrderMaterialUnit")
+  
+  @@map("units")
 }
 
 //////////////////////////////////////
@@ -281,10 +323,11 @@ model CraftProduct {
   reference        String?
   name             String?
   description      String?                  
-  unit             String                   // mg, ml, g, L, kg, unit
-  amount           Float                    @default(0)// Current stock amount
-  totalCost        Float?                   // Calculated total cost
-  salePrice        Float?                   // Calculated sale price
+  unitId           Int
+  unit             Unit                     @relation("CraftProductUnit", fields: [unitId], references: [id])
+  amount           Float                    @default(0)
+  totalCost        Float?                   
+  salePrice        Float?                   
   marginPercent    Float                    @default(30)
   vat              Float                    @default(19)
   minStock         Float                    @default(0)
@@ -296,27 +339,28 @@ model CraftProduct {
   
   // Relations
   product          Product?                 @relation(fields: [productId], references: [id])
-  craftMaterials   CraftProductMaterial[]   // Junction table for materials
-  craftServices    CraftProductService[]    // Junction table for services
+  craftMaterials   CraftProductMaterial[]   
+  craftServices    CraftProductService[]    
   
   @@map("craft_products")
 }
 
-// Junction table for CraftProduct <-> RawMaterial (many-to-many)
 model CraftProductMaterial {
   id              Int          @id @default(autoincrement())
   craftProductId  Int
   rawMaterialId   Int
-  amount          Float        // Amount of raw material needed
+  amount          Float
+  unitId          Int          // Unit for this specific material in this craft product
   
+  // Relations
   craftProduct    CraftProduct @relation(fields: [craftProductId], references: [id], onDelete: Cascade)
   rawMaterial     RawMaterial  @relation(fields: [rawMaterialId], references: [id])
+  unit            Unit         @relation("CraftProductMaterialUnit", fields: [unitId], references: [id])
   
   @@unique([craftProductId, rawMaterialId])
   @@map("craft_product_materials")
 }
 
-// Junction table for CraftProduct <-> Service (many-to-many)
 model CraftProductService {
   id              Int          @id @default(autoincrement())
   craftProductId  Int
@@ -329,13 +373,13 @@ model CraftProductService {
   @@map("craft_product_services")
 }
 
-// Keep the existing RawMaterial model
 model RawMaterial {
   id              Int                      @id @default(autoincrement())
   reference       String
   description     String?
   name            String
-  unit            String                   // mg, ml, g, L, kg, unit
+  unitId          Int
+  unit            Unit                     @relation("RawMaterialUnit", fields: [unitId], references: [id])
   amount          Float                    @default(0)
   purchasePrice   Float                    @default(0)
   isActive        Boolean                  @default(true)
@@ -348,7 +392,6 @@ model RawMaterial {
   @@map("raw_materials")
 }
 
-// Keep the existing Service model
 model Service {
   id              Int                      @id @default(autoincrement())
   reference       String
@@ -367,13 +410,13 @@ model Service {
   @@map("services")
 }
 
-// Production Order Model
 model ProductionOrder {
   id               Int                      @id @default(autoincrement())
-  unit             String                   // mg, ml, g, L, kg, unit
-  amount           Float                    @default(0)// Current stock amount
-  totalCost        Float?                   // Calculated total cost
-  salePrice        Float?                   // Calculated sale price
+  unitId           Int
+  unit             Unit                     @relation("ProductionOrderUnit", fields: [unitId], references: [id])
+  amount           Float                    @default(0)
+  totalCost        Float?                   
+  salePrice        Float?                   
   marginPercent    Float                    @default(30)
   vat              Float                    @default(19)
   isActive         Boolean                  @default(true)
@@ -389,32 +432,33 @@ model ProductionOrder {
   notes            String?
   completedAt      DateTime?
   cancelledAt      DateTime?
-  quantityProduced Float?                   // Actual quantity produced
-  wasteAmount      Float?                   // Waste/Scrap amount
+  quantityProduced Float?                   
+  wasteAmount      Float?                  
   
   // Relations
   product          Product?                 @relation(fields: [productId], references: [id])
-  productionOrderMaterials ProductionOrderMaterial[]   // Junction table for materials
-  productionOrderServices  ProductionOrderService[]    // Junction table for services
+  productionOrderMaterials ProductionOrderMaterial[]   
+  productionOrderServices  ProductionOrderService[]    
   
   @@map("production_orders")
 }
 
-// Junction table for ProductionOrder <-> RawMaterial (many-to-many)
 model ProductionOrderMaterial {
   id                  Int              @id @default(autoincrement())
   productionOrderId   Int
   rawMaterialId       Int
-  amount              Float            // Amount of raw material needed
+  amount              Float
+  unitId              Int              // Unit for this specific material in this production order
   
+  // Relations
   productionOrder     ProductionOrder  @relation(fields: [productionOrderId], references: [id], onDelete: Cascade)
   rawMaterial         RawMaterial      @relation(fields: [rawMaterialId], references: [id])
+  unit                Unit             @relation("ProductionOrderMaterialUnit", fields: [unitId], references: [id])
   
   @@unique([productionOrderId, rawMaterialId])
   @@map("production_order_materials")
 }
 
-// Junction table for ProductionOrder <-> Service (many-to-many)
 model ProductionOrderService {
   id                  Int              @id @default(autoincrement())
   productionOrderId   Int
@@ -538,11 +582,12 @@ model SaleInvoice {
 
   createdAt     DateTime           @default(now())
 }
+
 model SaleInvoiceService {
   id              Int       @id @default(autoincrement())
   saleInvoiceId   Int
   serviceId       Int
-  amount          Float?    // Optional: override the service price for this invoice
+  amount          Float?    
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
 
@@ -551,6 +596,7 @@ model SaleInvoiceService {
 
   @@unique([saleInvoiceId, serviceId])
 }
+
 model SaleInvoiceItem {
   id                   Int      @id @default(autoincrement())
   quantity             Int
@@ -579,25 +625,21 @@ model SaleInvoiceItem {
 // PAYMENT MODEL
 //////////////////////////////////////
 
-
 model Payment {
   id            Int           @id @default(autoincrement())
   amount        Float
   method        PaymentMethod
   createdAt     DateTime      @default(now())
 
-  // Check specific fields
   checkDate     DateTime?
   checkBank     String?
   checkNumber   String?
   
-  // Trait (canbiala) specific fields
   traitDate     DateTime?
   traitNumber   String?
   
-  // File upload
-  receiptFile   String?       // Store file path or URL
-  receiptFileName String?     // Original file name
+  receiptFile   String?       
+  receiptFileName String?     
   
   purchaseInvoiceId Int?
   purchaseInvoice   PurchaseInvoice? @relation("PurchaseInvoicePayments", fields: [purchaseInvoiceId], references: [id])
@@ -833,10 +875,10 @@ model StockTransferItem {
 
 model Expense {
   id              Int      @id @default(autoincrement())
-  title           String   // Raison
-  amount          Float    // Montant
-  date            DateTime // Date
-  receiptImage    String?  // File (optional)
+  title           String  
+  amount          Float    
+  date            DateTime 
+  receiptImage    String?  
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
   

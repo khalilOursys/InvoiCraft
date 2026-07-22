@@ -1,3 +1,5 @@
+// src/production-order/production-order.service.ts
+
 import {
   Injectable,
   NotFoundException,
@@ -5,45 +7,52 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { UnitConverter } from '../utils/unit-converter.util';
-import {
-  CreateProductionOrderDto,
-  ProductionOrderStatus,
-} from './dto/create-production-order.dto';
+import { UnitService } from '../unit/unit.service';
+import { CreateProductionOrderDto } from './dto/create-production-order.dto';
 import { UpdateProductionOrderDto } from './dto/update-production-order.dto';
 
 @Injectable()
 export class ProductionOrderService {
-  constructor(private prisma: PrismaService) {}
+  constructor(
+    private prisma: PrismaService,
+    private unitService: UnitService,
+    private unitConverter: UnitConverter,
+  ) {}
 
   // ==================== HELPER FUNCTIONS ====================
 
-  private calculateTotalMaterialNeeded(
-    materialPerUnit: number,
+  private async calculateTotalMaterialNeeded(
+    materialAmount: number,
     quantity: number,
-    productionOrderUnit: string,
-    rawMaterialUnit: string,
-  ): number {
-    const totalMaterialNeeded = materialPerUnit * quantity;
-    const amountInRawUnit = UnitConverter.convert(
-      totalMaterialNeeded,
-      productionOrderUnit,
-      rawMaterialUnit,
+    materialUnitId: number,
+    rawMaterialUnitId: number,
+  ): Promise<number> {
+    // Calculate total material needed in material unit
+    const totalInMaterialUnit = materialAmount * quantity;
+
+    // Convert total to raw material unit for stock deduction
+    const amountInRawUnit = await this.unitConverter.convert(
+      totalInMaterialUnit,
+      materialUnitId,
+      rawMaterialUnitId,
     );
+
     return amountInRawUnit;
   }
 
-  private checkRawMaterialStock(
+  private async checkRawMaterialStock(
     rawMaterial: any,
     amountNeeded: number,
     materialName: string,
     quantity: number,
     productionOrderName: string,
-  ): void {
+  ): Promise<void> {
     if (rawMaterial.amount < amountNeeded) {
+      const unit = await this.unitService.getUnitById(rawMaterial.unitId);
       throw new BadRequestException(
         `Insufficient stock for ${materialName}. ` +
-          `Available: ${rawMaterial.amount} ${rawMaterial.unit}, ` +
-          `Required: ${amountNeeded} ${rawMaterial.unit} ` +
+          `Available: ${rawMaterial.amount} ${unit.symbol}, ` +
+          `Required: ${amountNeeded} ${unit.symbol} ` +
           `for ${quantity} units of ${productionOrderName}`,
       );
     }
@@ -97,6 +106,27 @@ export class ProductionOrderService {
     return totalCost * (1 + marginPercent / 100);
   }
 
+  private async validateUnits(
+    materialUnitId: number,
+    rawMaterialUnitId: number,
+  ): Promise<void> {
+    // Check if material unit and raw material unit are compatible
+    const compatible = await this.unitConverter.areUnitsCompatible(
+      materialUnitId,
+      rawMaterialUnitId,
+    );
+
+    if (!compatible) {
+      const mUnit = await this.unitService.getUnitById(materialUnitId);
+      const rmUnit = await this.unitService.getUnitById(rawMaterialUnitId);
+
+      throw new BadRequestException(
+        `Incompatible units: Material uses ${mUnit.code} (${mUnit.family}), ` +
+          `Raw material uses ${rmUnit.code} (${rmUnit.family})`,
+      );
+    }
+  }
+
   // ==================== PRODUCT STOCK SYNC FUNCTIONS ====================
 
   private async addToProductStock(
@@ -112,12 +142,6 @@ export class ProductionOrderService {
           increment: quantityToAdd,
         },
       },
-    });
-
-    console.log({
-      step: 'PRODUCT STOCK - ADD',
-      productId: productId,
-      quantityAdded: quantityToAdd,
     });
   }
 
@@ -148,12 +172,6 @@ export class ProductionOrderService {
           decrement: quantityToSubtract,
         },
       },
-    });
-
-    console.log({
-      step: 'PRODUCT STOCK - SUBTRACT',
-      productId: productId,
-      quantitySubtracted: quantityToSubtract,
     });
   }
 
@@ -186,6 +204,7 @@ export class ProductionOrderService {
       for (const material of data.materials) {
         const rawMaterial = await this.prisma.rawMaterial.findUnique({
           where: { id: material.rawMaterialId },
+          include: { unit: true },
         });
 
         if (!rawMaterial) {
@@ -194,18 +213,20 @@ export class ProductionOrderService {
           );
         }
 
-        if (!UnitConverter.areUnitsCompatible(data.unit, rawMaterial.unit)) {
-          throw new BadRequestException(
-            `Incompatible units: Production order uses ${data.unit}, ` +
-              `Raw material ${rawMaterial.name} uses ${rawMaterial.unit}`,
-          );
-        }
+        // Validate material unit and raw material unit are compatible
+        await this.validateUnits(material.unitId, rawMaterial.unitId);
 
-        const amountInRawUnit = this.calculateTotalMaterialNeeded(
+        // Get the material unit for display
+        const materialUnit = await this.unitService.getUnitById(
+          material.unitId,
+        );
+
+        // Calculate total material needed in raw material unit
+        const amountInRawUnit = await this.calculateTotalMaterialNeeded(
           material.amount,
           data.amount,
-          data.unit,
-          rawMaterial.unit,
+          material.unitId,
+          rawMaterial.unitId,
         );
 
         console.log({
@@ -213,14 +234,16 @@ export class ProductionOrderService {
           productionOrderId: 'New',
           productionOrderQuantity: data.amount,
           materialName: rawMaterial.name,
-          materialPerUnit: material.amount,
+          materialAmount: material.amount,
+          materialUnit: materialUnit.code,
+          rawMaterialUnit: rawMaterial.unit.code,
           totalMaterialNeeded: material.amount * data.amount,
           amountInRawUnit: amountInRawUnit,
           rawMaterialCurrentStock: rawMaterial.amount,
           rawMaterialNewStock: rawMaterial.amount - amountInRawUnit,
         });
 
-        this.checkRawMaterialStock(
+        await this.checkRawMaterialStock(
           rawMaterial,
           amountInRawUnit,
           rawMaterial.name,
@@ -241,33 +264,39 @@ export class ProductionOrderService {
       totalCost += await this.calculateTotalServiceCost(data.serviceIds);
     }
 
-    const salePrice = this.calculateSalePrice(totalCost, data.marginPercent);
+    const salePrice = this.calculateSalePrice(
+      totalCost,
+      data.marginPercent || 30,
+    );
 
     // Create production order
     const productionOrder = await this.prisma.productionOrder.create({
       data: {
-        unit: data.unit,
+        unitId: data.unitId,
         amount: data.amount,
         productId: data.productId,
-        marginPercent: data.marginPercent,
-        vat: data.vat,
+        marginPercent: data.marginPercent || 30,
+        vat: data.vat || 19,
         totalCost,
         salePrice,
-        orderDate: data.orderDate || new Date(),
-        expectedDelivery: data.expectedDelivery,
+        orderDate: data.orderDate ? new Date(data.orderDate) : new Date(),
+        expectedDelivery: data.expectedDelivery
+          ? new Date(data.expectedDelivery)
+          : undefined,
         status: data.status || 'PENDING',
         priority: data.priority || 'MEDIUM',
         notes: data.notes,
         quantityProduced: data.quantityProduced,
         wasteAmount: data.wasteAmount,
         productionOrderMaterials: {
-          create: data.materials.map((m) => ({
+          create: (data.materials || []).map((m) => ({
             rawMaterialId: m.rawMaterialId,
             amount: m.amount,
+            unitId: m.unitId,
           })),
         },
         productionOrderServices: {
-          create: data.serviceIds.map((id) => ({
+          create: (data.serviceIds || []).map((id) => ({
             serviceId: id,
           })),
         },
@@ -275,7 +304,10 @@ export class ProductionOrderService {
       include: {
         productionOrderMaterials: {
           include: {
-            rawMaterial: true,
+            rawMaterial: {
+              include: { unit: true },
+            },
+            unit: true,
           },
         },
         productionOrderServices: {
@@ -284,6 +316,7 @@ export class ProductionOrderService {
           },
         },
         product: true,
+        unit: true,
       },
     });
 
@@ -303,7 +336,10 @@ export class ProductionOrderService {
       include: {
         productionOrderMaterials: {
           include: {
-            rawMaterial: true,
+            rawMaterial: {
+              include: { unit: true },
+            },
+            unit: true,
           },
         },
         productionOrderServices: {
@@ -312,6 +348,7 @@ export class ProductionOrderService {
           },
         },
         product: true,
+        unit: true,
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -326,7 +363,10 @@ export class ProductionOrderService {
       include: {
         productionOrderMaterials: {
           include: {
-            rawMaterial: true,
+            rawMaterial: {
+              include: { unit: true },
+            },
+            unit: true,
           },
         },
         productionOrderServices: {
@@ -335,6 +375,7 @@ export class ProductionOrderService {
           },
         },
         product: true,
+        unit: true,
       },
       orderBy: {
         createdAt: 'desc',
@@ -348,7 +389,10 @@ export class ProductionOrderService {
       include: {
         productionOrderMaterials: {
           include: {
-            rawMaterial: true,
+            rawMaterial: {
+              include: { unit: true },
+            },
+            unit: true,
           },
         },
         productionOrderServices: {
@@ -357,6 +401,7 @@ export class ProductionOrderService {
           },
         },
         product: true,
+        unit: true,
       },
     });
 
@@ -376,7 +421,10 @@ export class ProductionOrderService {
       include: {
         productionOrderMaterials: {
           include: {
-            rawMaterial: true,
+            rawMaterial: {
+              include: { unit: true },
+            },
+            unit: true,
           },
         },
         productionOrderServices: {
@@ -385,6 +433,7 @@ export class ProductionOrderService {
           },
         },
         product: true,
+        unit: true,
       },
       orderBy: { createdAt: 'desc' },
     });
@@ -405,30 +454,25 @@ export class ProductionOrderService {
     const updateData: any = { ...data };
     let totalCost = 0;
 
+    const currentQuantity = data.amount || existing.amount;
+
     // Handle materials update
     if (data.materials !== undefined) {
-      const quantity = data.amount || existing.amount;
-      const unit = data.unit || existing.unit;
-
       // Return old materials
       for (const oldMaterial of existing.productionOrderMaterials) {
         const rawMaterial = await this.prisma.rawMaterial.findUnique({
           where: { id: oldMaterial.rawMaterialId },
+          include: { unit: true },
         });
+
         if (rawMaterial) {
-          const amountToReturn = this.calculateTotalMaterialNeeded(
+          const amountToReturn = await this.calculateTotalMaterialNeeded(
             oldMaterial.amount,
-            quantity,
-            unit,
-            rawMaterial.unit,
+            currentQuantity,
+            oldMaterial.unitId,
+            rawMaterial.unitId,
           );
-          console.log({
-            step: 'UPDATE - Return Old Materials',
-            materialName: rawMaterial.name,
-            amountToReturn: amountToReturn,
-            rawMaterialCurrentStock: rawMaterial.amount,
-            rawMaterialNewStock: rawMaterial.amount + amountToReturn,
-          });
+
           await this.returnRawMaterialStock(
             oldMaterial.rawMaterialId,
             amountToReturn,
@@ -445,6 +489,7 @@ export class ProductionOrderService {
       for (const newMaterial of data.materials) {
         const rawMaterial = await this.prisma.rawMaterial.findUnique({
           where: { id: newMaterial.rawMaterialId },
+          include: { unit: true },
         });
 
         if (!rawMaterial) {
@@ -453,27 +498,14 @@ export class ProductionOrderService {
           );
         }
 
-        if (!UnitConverter.areUnitsCompatible(unit, rawMaterial.unit)) {
-          throw new BadRequestException(
-            `Incompatible units: Production order uses ${unit}, ` +
-              `Raw material ${rawMaterial.name} uses ${rawMaterial.unit}`,
-          );
-        }
+        await this.validateUnits(newMaterial.unitId, rawMaterial.unitId);
 
-        const amountToDeduct = this.calculateTotalMaterialNeeded(
+        const amountToDeduct = await this.calculateTotalMaterialNeeded(
           newMaterial.amount,
-          quantity,
-          unit,
-          rawMaterial.unit,
+          currentQuantity,
+          newMaterial.unitId,
+          rawMaterial.unitId,
         );
-
-        console.log({
-          step: 'UPDATE - Deduct New Materials',
-          materialName: rawMaterial.name,
-          amountToDeduct: amountToDeduct,
-          rawMaterialCurrentStock: rawMaterial.amount,
-          rawMaterialNewStock: rawMaterial.amount - amountToDeduct,
-        });
 
         totalCost += rawMaterial.purchasePrice * amountToDeduct;
         await this.deductRawMaterialStock(
@@ -488,21 +520,23 @@ export class ProductionOrderService {
           productionOrderId: id,
           rawMaterialId: m.rawMaterialId,
           amount: m.amount,
+          unitId: m.unitId,
         })),
       });
     } else {
       // Calculate cost from existing materials
-      const quantity = data.amount || existing.amount;
       for (const material of existing.productionOrderMaterials) {
         const rawMaterial = await this.prisma.rawMaterial.findUnique({
           where: { id: material.rawMaterialId },
+          include: { unit: true },
         });
+
         if (rawMaterial) {
-          const amountInRawUnit = this.calculateTotalMaterialNeeded(
+          const amountInRawUnit = await this.calculateTotalMaterialNeeded(
             material.amount,
-            quantity,
-            existing.unit,
-            rawMaterial.unit,
+            currentQuantity,
+            material.unitId,
+            rawMaterial.unitId,
           );
           totalCost += rawMaterial.purchasePrice * amountInRawUnit;
         }
@@ -555,7 +589,6 @@ export class ProductionOrderService {
     updateData.totalCost = totalCost;
     updateData.salePrice = salePrice;
 
-    // Handle status updates
     if (data.status === 'COMPLETED' && !existing.completedAt) {
       updateData.completedAt = new Date();
     }
@@ -572,14 +605,16 @@ export class ProductionOrderService {
       }
     });
 
-    // Update production order
     const updatedProductionOrder = await this.prisma.productionOrder.update({
       where: { id },
       data: updateData,
       include: {
         productionOrderMaterials: {
           include: {
-            rawMaterial: true,
+            rawMaterial: {
+              include: { unit: true },
+            },
+            unit: true,
           },
         },
         productionOrderServices: {
@@ -588,10 +623,10 @@ export class ProductionOrderService {
           },
         },
         product: true,
+        unit: true,
       },
     });
 
-    // SYNC: Update product stock based on quantity change
     if (updatedProductionOrder.productId) {
       const oldQuantity = existing.amount;
       const newQuantity = data.amount !== undefined ? data.amount : oldQuantity;
@@ -620,7 +655,7 @@ export class ProductionOrderService {
     });
   }
 
-  // ==================== SELL / COMPLETE ORDER ====================
+  // ==================== COMPLETE ORDER ====================
 
   async completeOrder(id: number, quantityProduced?: number) {
     const productionOrder = await this.findOne(id);
@@ -644,6 +679,7 @@ export class ProductionOrderService {
       for (const material of productionOrder.productionOrderMaterials) {
         const rawMaterial = await prisma.rawMaterial.findUnique({
           where: { id: material.rawMaterialId },
+          include: { unit: true },
         });
 
         if (!rawMaterial) {
@@ -652,26 +688,14 @@ export class ProductionOrderService {
           );
         }
 
-        const amountInRawUnit = this.calculateTotalMaterialNeeded(
+        const amountInRawUnit = await this.calculateTotalMaterialNeeded(
           material.amount,
           actualQuantity,
-          productionOrder.unit,
-          rawMaterial.unit,
+          material.unitId,
+          rawMaterial.unitId,
         );
 
-        console.log({
-          step: 'COMPLETE ORDER - Raw Material Deduction',
-          productionOrderId: productionOrder.id,
-          quantityProduced: actualQuantity,
-          materialName: rawMaterial.name,
-          materialPerUnit: material.amount,
-          totalMaterialNeeded: material.amount * actualQuantity,
-          amountInRawUnit: amountInRawUnit,
-          rawMaterialCurrentStock: rawMaterial.amount,
-          rawMaterialNewStock: rawMaterial.amount - amountInRawUnit,
-        });
-
-        this.checkRawMaterialStock(
+        await this.checkRawMaterialStock(
           rawMaterial,
           amountInRawUnit,
           rawMaterial.name,
@@ -685,7 +709,6 @@ export class ProductionOrderService {
         );
       }
 
-      // Update production order
       const updatedProductionOrder = await prisma.productionOrder.update({
         where: { id },
         data: {
@@ -696,7 +719,10 @@ export class ProductionOrderService {
         include: {
           productionOrderMaterials: {
             include: {
-              rawMaterial: true,
+              rawMaterial: {
+                include: { unit: true },
+              },
+              unit: true,
             },
           },
           productionOrderServices: {
@@ -705,10 +731,10 @@ export class ProductionOrderService {
             },
           },
           product: true,
+          unit: true,
         },
       });
 
-      // SYNC: Add to product stock
       if (updatedProductionOrder.productId) {
         await this.addToProductStock(
           updatedProductionOrder.productId,
@@ -743,7 +769,10 @@ export class ProductionOrderService {
       include: {
         productionOrderMaterials: {
           include: {
-            rawMaterial: true,
+            rawMaterial: {
+              include: { unit: true },
+            },
+            unit: true,
           },
         },
         productionOrderServices: {
@@ -752,6 +781,7 @@ export class ProductionOrderService {
           },
         },
         product: true,
+        unit: true,
       },
     });
   }
@@ -771,7 +801,10 @@ export class ProductionOrderService {
       include: {
         productionOrderMaterials: {
           include: {
-            rawMaterial: true,
+            rawMaterial: {
+              include: { unit: true },
+            },
+            unit: true,
           },
         },
         productionOrderServices: {
@@ -780,6 +813,7 @@ export class ProductionOrderService {
           },
         },
         product: true,
+        unit: true,
       },
     });
 
@@ -808,14 +842,15 @@ export class ProductionOrderService {
     for (const material of productionOrder.productionOrderMaterials) {
       const rawMaterial = await this.prisma.rawMaterial.findUnique({
         where: { id: material.rawMaterialId },
+        include: { unit: true },
       });
 
       if (rawMaterial) {
-        const amountInRawUnit = this.calculateTotalMaterialNeeded(
+        const amountInRawUnit = await this.calculateTotalMaterialNeeded(
           material.amount,
           productionOrder.amount,
-          productionOrder.unit,
-          rawMaterial.unit,
+          material.unitId,
+          rawMaterial.unitId,
         );
         totalCost += rawMaterial.purchasePrice * amountInRawUnit;
       }
@@ -845,7 +880,10 @@ export class ProductionOrderService {
       include: {
         productionOrderMaterials: {
           include: {
-            rawMaterial: true,
+            rawMaterial: {
+              include: { unit: true },
+            },
+            unit: true,
           },
         },
         productionOrderServices: {
@@ -854,6 +892,7 @@ export class ProductionOrderService {
           },
         },
         product: true,
+        unit: true,
       },
     });
   }

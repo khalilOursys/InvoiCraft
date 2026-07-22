@@ -1,10 +1,19 @@
+// app/raw-materials/add/page.tsx
+
 "use client";
 
 import React, { useState } from "react";
 import { useRouter } from "next/navigation";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import PageBreadcrumb from "@/components/common/PageBreadCrumb";
 import * as Toast from "@radix-ui/react-toast";
+
+// Récupérer les unités depuis l'API
+const fetchUnits = async () => {
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}units`);
+  if (!response.ok) throw new Error("Échec de la récupération des unités");
+  return response.json();
+};
 
 const createRawMaterial = async (data: any) => {
   const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}raw-materials`, {
@@ -21,15 +30,6 @@ const createRawMaterial = async (data: any) => {
   return response.json();
 };
 
-const unitOptions = [
-  { value: "g", label: "Gramme (g)" },
-  { value: "kg", label: "Kilogramme (kg)" },
-  { value: "mg", label: "Milligramme (mg)" },
-  { value: "L", label: "Litre (L)" },
-  { value: "ml", label: "Millilitre (ml)" },
-  { value: "unit", label: "Unité" },
-];
-
 export default function AddRawMaterialPage() {
   const queryClient = useQueryClient();
   const router = useRouter();
@@ -38,7 +38,7 @@ export default function AddRawMaterialPage() {
     reference: "",
     name: "",
     description: "",
-    unit: "unit",
+    unitId: 0,
     amount: 0,
     purchasePrice: 0,
   });
@@ -47,6 +47,12 @@ export default function AddRawMaterialPage() {
   const [toastOpen, setToastOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
   const [toastType, setToastType] = useState<"success" | "error">("success");
+
+  // Récupérer les unités
+  const { data: units, isLoading: isLoadingUnits } = useQuery({
+    queryKey: ["units"],
+    queryFn: fetchUnits,
+  });
 
   const showToast = (msg: string, type: "success" | "error" = "success") => {
     setToastMsg(msg);
@@ -83,6 +89,12 @@ export default function AddRawMaterialPage() {
       return;
     }
 
+    if (!formData.unitId || formData.unitId === 0) {
+      showToast("L'unité est requise", "error");
+      setIsSubmitting(false);
+      return;
+    }
+
     if (formData.purchasePrice <= 0) {
       showToast("Le prix d'achat doit être positif", "error");
       setIsSubmitting(false);
@@ -99,6 +111,31 @@ export default function AddRawMaterialPage() {
   };
 
   const handleCancel = () => router.push("/raw-materials");
+
+  if (isLoadingUnits) {
+    return (
+      <div className="p-6">
+        <div className="flex justify-center items-center h-64">
+          <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
+        </div>
+      </div>
+    );
+  }
+
+  // Grouper les unités par famille
+  const groupedUnits = units?.reduce((acc: any, unit: any) => {
+    if (!acc[unit.family]) {
+      acc[unit.family] = [];
+    }
+    acc[unit.family].push(unit);
+    return acc;
+  }, {});
+
+  const familleLabels: Record<string, string> = {
+    volume: "Volume",
+    weight: "Poids",
+    unit: "Unité"
+  };
 
   return (
     <Toast.Provider>
@@ -157,16 +194,26 @@ export default function AddRawMaterialPage() {
                   </label>
                   <select
                     required
-                    value={formData.unit}
-                    onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
+                    value={formData.unitId}
+                    onChange={(e) => setFormData({ ...formData, unitId: Number(e.target.value) })}
                     className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
                   >
-                    {unitOptions.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
+                    <option value={0}>Sélectionner une unité...</option>
+                    {groupedUnits && Object.entries(groupedUnits).map(([family, familyUnits]: [string, any]) => (
+                      <optgroup key={family} label={familleLabels[family] || family.toUpperCase()}>
+                        {familyUnits.map((unit: any) => (
+                          <option key={unit.id} value={unit.id}>
+                            {unit.name} ({unit.symbol})
+                          </option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
+                  {formData.unitId > 0 && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      {units?.find((u: any) => u.id === formData.unitId)?.description}
+                    </p>
+                  )}
                 </div>
 
                 {/* Quantité */}
@@ -182,6 +229,11 @@ export default function AddRawMaterialPage() {
                     onChange={(e) => setFormData({ ...formData, amount: Number(e.target.value) })}
                     className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
                   />
+                  {formData.unitId > 0 && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      Stock actuel: {formData.amount} {units?.find((u: any) => u.id === formData.unitId)?.symbol}
+                    </p>
+                  )}
                 </div>
 
                 {/* Prix d'achat */}

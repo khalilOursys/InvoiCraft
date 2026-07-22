@@ -19,7 +19,23 @@ interface Brand {
 interface RawMaterial {
   id: number;
   name: string;
-  unit: string;
+  unit: {
+    id: number;
+    code: string;
+    name: string;
+    symbol: string;
+    family: string;
+  };
+  unitId: number;
+}
+
+interface Unit {
+  id: number;
+  code: string;
+  name: string;
+  symbol: string;
+  family: string;
+  description?: string;
 }
 
 interface Service {
@@ -53,7 +69,7 @@ interface CraftProduct {
   reference: string;
   name: string;
   description?: string;
-  unit: string;
+  unitId: number;
   amount: number;
   totalCost?: number;
   salePrice?: number;
@@ -63,7 +79,7 @@ interface CraftProduct {
   img?: string;
   isActive: boolean;
   productId?: number;
-  craftMaterials?: { rawMaterialId: number; amount: number }[];
+  craftMaterials?: { rawMaterialId: number; amount: number; unitId: number }[];
   craftServices?: { serviceId: number }[];
 }
 
@@ -91,6 +107,12 @@ const fetchServices = async (): Promise<Service[]> => {
   return response.json();
 };
 
+const fetchUnits = async (): Promise<Unit[]> => {
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}units`);
+  if (!response.ok) throw new Error("Échec de la récupération des unités");
+  return response.json();
+};
+
 const fetchProduct = async (id: string): Promise<{ product?: Product; craftProduct?: CraftProduct }> => {
   const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}products/product-craft/${id}`);
   if (!response.ok) throw new Error("Échec de la récupération du produit");
@@ -113,15 +135,6 @@ const vatOptions = [
   { value: 0, label: "0%" },
   { value: 7, label: "7%" },
   { value: 19, label: "19%" },
-];
-
-const unitOptions = [
-  { value: "mg", label: "mg" },
-  { value: "ml", label: "ml" },
-  { value: "g", label: "g" },
-  { value: "L", label: "L" },
-  { value: "kg", label: "kg" },
-  { value: "unit", label: "Unité" },
 ];
 
 interface PageProps {
@@ -173,13 +186,13 @@ function EditProductContent({ id }: { id: string }) {
     craftReference: "",
     craftName: "",
     craftDescription: "",
-    craftUnit: "kg",
+    craftUnitId: 0,
     craftAmount: 0,
     craftMarginPercent: 30,
     craftVat: 19,
     craftMinStock: 5,
     craftProductId: "",
-    craftMaterials: [] as { rawMaterialId: number; amount: number }[],
+    craftMaterials: [] as { rawMaterialId: number; amount: number; unitId: number }[],
     craftServiceIds: [] as number[],
   });
 
@@ -211,6 +224,11 @@ function EditProductContent({ id }: { id: string }) {
   const { data: services = [] } = useQuery({
     queryKey: ["services"],
     queryFn: fetchServices
+  });
+
+  const { data: units = [] } = useQuery({
+    queryKey: ["units"],
+    queryFn: fetchUnits
   });
 
   const { data: productData, isLoading: isLoadingProduct } = useQuery({
@@ -280,7 +298,7 @@ function EditProductContent({ id }: { id: string }) {
           craftReference: craftProduct.reference || "",
           craftName: craftProduct.name || "",
           craftDescription: craftProduct.description || "",
-          craftUnit: craftProduct.unit || "kg",
+          craftUnitId: craftProduct.unitId || 0,
           craftAmount: craftProduct.amount || 0,
           craftMarginPercent: craftProduct.marginPercent || 30,
           craftVat: craftProduct.vat || 19,
@@ -288,7 +306,8 @@ function EditProductContent({ id }: { id: string }) {
           craftProductId: craftProduct.productId ? String(craftProduct.productId) : "",
           craftMaterials: craftProduct.craftMaterials?.map(m => ({
             rawMaterialId: m.rawMaterialId,
-            amount: m.amount
+            amount: m.amount,
+            unitId: m.unitId || 0
           })) || [],
           craftServiceIds: craftProduct.craftServices?.map(s => s.serviceId) || [],
         }));
@@ -337,7 +356,7 @@ function EditProductContent({ id }: { id: string }) {
   const handleAddMaterial = () => {
     setFormData(prev => ({
       ...prev,
-      craftMaterials: [...prev.craftMaterials, { rawMaterialId: 0, amount: 0 }]
+      craftMaterials: [...prev.craftMaterials, { rawMaterialId: 0, amount: 0, unitId: 0 }]
     }));
   };
 
@@ -364,6 +383,34 @@ function EditProductContent({ id }: { id: string }) {
           : [...prev.craftServiceIds, serviceId]
       };
     });
+  };
+
+  const getAvailableUnitsForMaterial = (rawMaterialId: number) => {
+    const rawMaterial = rawMaterials.find(rm => rm.id === rawMaterialId);
+    if (!rawMaterial) return [];
+
+    const rawMaterialUnit = units.find(u => u.id === rawMaterial.unitId);
+    if (!rawMaterialUnit) return [];
+
+    return units.filter(unit => unit.family === rawMaterialUnit.family);
+  };
+
+  const getRawMaterial = (rawMaterialId: number) => {
+    return rawMaterials.find(rm => rm.id === rawMaterialId);
+  };
+
+  const groupedUnits = units.reduce((acc: any, unit: any) => {
+    if (!acc[unit.family]) {
+      acc[unit.family] = [];
+    }
+    acc[unit.family].push(unit);
+    return acc;
+  }, {});
+
+  const familleLabels: Record<string, string> = {
+    volume: "Volume",
+    weight: "Poids",
+    unit: "Unité"
   };
 
   const submitForm = async (event: React.FormEvent) => {
@@ -429,13 +476,13 @@ function EditProductContent({ id }: { id: string }) {
         reference: formData.craftReference,
         name: formData.craftName,
         description: formData.craftDescription,
-        unit: formData.craftUnit,
+        unitId: formData.craftUnitId,
         amount: formData.craftAmount,
         marginPercent: formData.craftMarginPercent,
         vat: formData.craftVat,
         minStock: formData.craftMinStock,
         productId: formData.craftProductId ? parseInt(formData.craftProductId) : undefined,
-        materials: formData.craftMaterials.filter(m => m.rawMaterialId > 0 && m.amount > 0),
+        materials: formData.craftMaterials.filter(m => m.rawMaterialId > 0 && m.amount > 0 && m.unitId > 0),
         serviceIds: formData.craftServiceIds,
       };
     }
@@ -482,7 +529,6 @@ function EditProductContent({ id }: { id: string }) {
           </button>
         </div>
 
-        {/* Info banner if craft product exists */}
         {hasCraftProduct && (
           <div className="mb-6 rounded-sm border border-green-500 bg-green-50 dark:bg-green-900/20 p-4">
             <p className="text-sm font-medium text-green-700 dark:text-green-400">
@@ -742,25 +788,30 @@ function EditProductContent({ id }: { id: string }) {
               {hasCraftProduct && (
                 <div className="mt-8 border-t border-stroke pt-6 dark:border-strokedark">
                   <h3 className="mb-4 text-xl font-semibold text-black dark:text-white">
-                    Informations du produit artisanal lié
+                    Fiche technique
                   </h3>
 
                   <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
-                    {/* Craft Unit */}
+
                     <div>
                       <label className="mb-3 block text-sm font-medium text-black dark:text-white">
-                        Unité <span className="text-danger">*</span>
+                        Unité du produit<span className="text-danger">*</span>
                       </label>
                       <select
                         required
-                        value={formData.craftUnit}
-                        onChange={(e) => setFormData({ ...formData, craftUnit: e.target.value })}
+                        value={formData.craftUnitId}
+                        onChange={(e) => setFormData({ ...formData, craftUnitId: Number(e.target.value) })}
                         className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
                       >
-                        {unitOptions.map((unit) => (
-                          <option key={unit.value} value={unit.value}>
-                            {unit.label}
-                          </option>
+                        <option value={0}>Sélectionner une unité</option>
+                        {Object.entries(groupedUnits).map(([family, familyUnits]) => (
+                          <optgroup key={family} label={familleLabels[family] || family.toUpperCase()}>
+                            {(familyUnits as Unit[]).map((unit) => (
+                              <option key={unit.id} value={unit.id}>
+                                {unit.name} ({unit.symbol})
+                              </option>
+                            ))}
+                          </optgroup>
                         ))}
                       </select>
                     </div>
@@ -781,42 +832,64 @@ function EditProductContent({ id }: { id: string }) {
                       </button>
                     </div>
 
-                    {formData.craftMaterials.map((material, index) => (
-                      <div key={index} className="mb-3 flex gap-3 items-end">
-                        <div className="flex-1">
-                          <select
-                            value={material.rawMaterialId}
-                            onChange={(e) => handleMaterialChange(index, 'rawMaterialId', Number(e.target.value))}
-                            className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
-                          >
-                            <option value={0}>Sélectionner une matière</option>
-                            {rawMaterials.map((rm) => (
-                              <option key={rm.id} value={rm.id}>
-                                {rm.name} ({rm.unit})
+                    {formData.craftMaterials.map((material, index) => {
+                      const rawMaterial = getRawMaterial(material.rawMaterialId);
+                      const availableUnits = getAvailableUnitsForMaterial(material.rawMaterialId);
+
+                      return (
+                        <div key={index} className="mb-3 flex gap-3 items-end">
+                          <div className="flex-1">
+                            <select
+                              value={material.rawMaterialId}
+                              onChange={(e) => handleMaterialChange(index, 'rawMaterialId', Number(e.target.value))}
+                              className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                            >
+                              <option value={0}>Sélectionner une matière</option>
+                              {rawMaterials.map((rm) => (
+                                <option key={rm.id} value={rm.id}>
+                                  {rm.name} ({rm.unit.name})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <div className="flex-1">
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0"
+                              placeholder="Quantité"
+                              value={material.amount}
+                              onChange={(e) => handleMaterialChange(index, 'amount', Number(e.target.value))}
+                              className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                            />
+                          </div>
+                          <div className="flex-1">
+                            <select
+                              value={material.unitId}
+                              onChange={(e) => handleMaterialChange(index, 'unitId', Number(e.target.value))}
+                              className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
+                              disabled={!material.rawMaterialId}
+                            >
+                              <option value={0}>
+                                {material.rawMaterialId ? "Sélectionner une unité" : "Sélectionnez d'abord une matière"}
                               </option>
-                            ))}
-                          </select>
+                              {availableUnits.map((unit) => (
+                                <option key={unit.id} value={unit.id}>
+                                  {unit.name} ({unit.symbol})
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveMaterial(index)}
+                            className="rounded-md bg-red-600 px-3 py-3 text-white hover:bg-red-700 transition-colors"
+                          >
+                            ✕
+                          </button>
                         </div>
-                        <div className="flex-1">
-                          <input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            placeholder="Quantité"
-                            value={material.amount}
-                            onChange={(e) => handleMaterialChange(index, 'amount', Number(e.target.value))}
-                            className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveMaterial(index)}
-                          className="rounded-md bg-red-600 px-3 py-3 text-white hover:bg-red-700 transition-colors"
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
 
                   {/* Services Section */}
@@ -869,7 +942,6 @@ function EditProductContent({ id }: { id: string }) {
           </form>
         </div>
 
-        {/* Toast Notifications */}
         <Toast.Root
           open={toastOpen}
           onOpenChange={setToastOpen}

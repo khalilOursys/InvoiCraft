@@ -35,7 +35,8 @@ import {
   SettingsIcon,
   LayersIcon,
   WrenchIcon,
-  WalletIcon
+  WalletIcon,
+  RulerIcon
 } from "lucide-react";
 
 type NavItem = {
@@ -67,11 +68,11 @@ const navItems: NavItem[] = [
         path: "/purchase-invoice/list/PURCHASE_ORDER",
         icon: <PackageIcon size={16} />
       },
-      {
+      /* {
         name: "Avoirs d'achat",
         path: "/purchase-invoice/list/PURCHASE_REFUND",
         icon: <ReceiptIcon size={16} />
-      },
+      }, */
     ],
   },
   // Factures de vente avec sous-menu
@@ -79,6 +80,11 @@ const navItems: NavItem[] = [
     name: "Factures de vente",
     icon: <TableIcon />,
     subItems: [
+      {
+        name: "Factures bon sortie",
+        path: "/sale-invoice/list/SHIPPING_NOTE_INVOICE",
+        icon: <FileCheckIcon size={16} />
+      },
       {
         name: "Factures de vente",
         path: "/sale-invoice/list/SALE_INVOICE",
@@ -125,6 +131,11 @@ const navItems: NavItem[] = [
         name: "Services",
         icon: <WrenchIcon size={20} />,
         path: "/services",
+      },
+      {
+        name: "Unités",
+        icon: <RulerIcon size={20} />,
+        path: "/units",
       },
       {
         name: "Marques",

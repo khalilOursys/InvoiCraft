@@ -1,79 +1,117 @@
 // src/utils/unit-converter.util.ts
 
+import { Injectable } from '@nestjs/common';
+import { UnitService } from '../unit/unit.service';
+
+@Injectable()
 export class UnitConverter {
-  private static readonly conversionMap: Record<
-    string,
-    Record<string, number>
-  > = {
-    // Volume conversions (all lowercase keys)
-    ml: { ml: 1, l: 0.001, cl: 0.1, dl: 0.01, m3: 0.000001 },
-    l: { ml: 1000, l: 1, cl: 100, dl: 10, m3: 0.001 },
-    cl: { ml: 10, l: 0.01, cl: 1, dl: 0.1, m3: 0.00001 },
-    dl: { ml: 100, l: 0.1, cl: 10, dl: 1, m3: 0.0001 },
-    m3: { ml: 1000000, l: 1000, cl: 100000, dl: 10000, m3: 1 },
+  constructor(private unitService: UnitService) {}
 
-    // Weight conversions (all lowercase keys)
-    g: { g: 1, kg: 0.001, mg: 1000, lb: 0.00220462, oz: 0.035274 },
-    kg: { g: 1000, kg: 1, mg: 1000000, lb: 2.20462, oz: 35.274 },
-    mg: { g: 0.001, kg: 0.000001, mg: 1, lb: 0.00000220462, oz: 0.000035274 },
-    lb: { g: 453.592, kg: 0.453592, mg: 453592, lb: 1, oz: 16 },
-    oz: { g: 28.3495, kg: 0.0283495, mg: 28349.5, lb: 0.0625, oz: 1 },
-  };
-
-  static convert(value: number, fromUnit: string, toUnit: string): number {
-    // Check if units are provided
-    if (!fromUnit || !toUnit) {
-      throw new Error('Both fromUnit and toUnit are required');
-    }
-
-    // Convert to lowercase and trim
-    const fromUnitLower = fromUnit.toLowerCase().trim();
-    const toUnitLower = toUnit.toLowerCase().trim();
-
-    // If same unit, return the same value
-    if (fromUnitLower === toUnitLower) {
+  /**
+   * Convert a value from one unit to another using DB data
+   */
+  async convert(
+    value: number,
+    fromUnitId: number,
+    toUnitId: number,
+  ): Promise<number> {
+    if (fromUnitId === toUnitId) {
       return value;
     }
 
-    // Check if units exist in the map
-    if (!this.conversionMap[fromUnitLower]) {
+    const fromUnit = await this.unitService.getUnitById(fromUnitId);
+    const toUnit = await this.unitService.getUnitById(toUnitId);
+
+    if (fromUnit.family !== toUnit.family) {
       throw new Error(
-        `Unknown unit: ${fromUnit} (supported: ${Object.keys(this.conversionMap).join(', ')})`,
+        `Cannot convert from ${fromUnit.code} (${fromUnit.family}) to ${toUnit.code} (${toUnit.family})`,
       );
     }
 
-    if (!this.conversionMap[toUnitLower]) {
+    const fromBaseUnit = fromUnit.baseUnitId
+      ? await this.unitService.getUnitById(fromUnit.baseUnitId)
+      : fromUnit;
+
+    const toBaseUnit = toUnit.baseUnitId
+      ? await this.unitService.getUnitById(toUnit.baseUnitId)
+      : toUnit;
+
+    if (fromBaseUnit.id !== toBaseUnit.id) {
       throw new Error(
-        `Unknown unit: ${toUnit} (supported: ${Object.keys(this.conversionMap).join(', ')})`,
+        `Incompatible base units: ${fromBaseUnit.code} vs ${toBaseUnit.code}`,
       );
     }
 
-    // Check if conversion exists
-    const conversion = this.conversionMap[fromUnitLower]?.[toUnitLower];
+    const valueInBase = value * fromUnit.conversionToBase;
+    const result = valueInBase / toUnit.conversionToBase;
 
-    if (conversion === undefined) {
-      throw new Error(`Cannot convert from ${fromUnit} to ${toUnit}`);
-    }
-
-    return value * conversion;
+    return result;
   }
 
-  static areUnitsCompatible(unit1: string, unit2: string): boolean {
-    const volumeUnits = ['ml', 'l', 'cl', 'dl', 'm3'];
-    const weightUnits = ['g', 'kg', 'mg', 'lb', 'oz'];
+  async areUnitsCompatible(unitId1: number, unitId2: number): Promise<boolean> {
+    if (unitId1 === unitId2) return true;
 
-    const unit1Lower = unit1.toLowerCase().trim();
-    const unit2Lower = unit2.toLowerCase().trim();
+    const unit1 = await this.unitService.getUnitById(unitId1);
+    const unit2 = await this.unitService.getUnitById(unitId2);
 
-    // Check if both are volume units
-    const isUnit1Volume = volumeUnits.includes(unit1Lower);
-    const isUnit2Volume = volumeUnits.includes(unit2Lower);
+    return unit1.family === unit2.family;
+  }
 
-    // Check if both are weight units
-    const isUnit1Weight = weightUnits.includes(unit1Lower);
-    const isUnit2Weight = weightUnits.includes(unit2Lower);
+  async getBaseUnit(unitId: number): Promise<any> {
+    const unit = await this.unitService.getUnitById(unitId);
 
-    // Units are compatible if both are volume or both are weight
-    return (isUnit1Volume && isUnit2Volume) || (isUnit1Weight && isUnit2Weight);
+    if (unit.baseUnitId) {
+      return this.unitService.getUnitById(unit.baseUnitId);
+    }
+
+    return unit;
+  }
+
+  async hasSubUnits(unitId: number): Promise<boolean> {
+    const subUnits = await this.unitService.getSubUnitsForUnit(unitId);
+    return subUnits.length > 0;
+  }
+
+  async getCompatibleUnits(unitId: number): Promise<any[]> {
+    const unit = await this.unitService.getUnitById(unitId);
+    return this.unitService.getUnitsByFamily(unit.family);
+  }
+
+  async format(
+    value: number,
+    unitId: number,
+    decimals: number = 2,
+  ): Promise<string> {
+    const unit = await this.unitService.getUnitById(unitId);
+    return `${value.toFixed(decimals)} ${unit.symbol}`;
+  }
+
+  async getConversionFactor(
+    fromUnitId: number,
+    toUnitId: number,
+  ): Promise<number> {
+    if (fromUnitId === toUnitId) {
+      return 1;
+    }
+
+    const fromUnit = await this.unitService.getUnitById(fromUnitId);
+    const toUnit = await this.unitService.getUnitById(toUnitId);
+
+    if (fromUnit.family !== toUnit.family) {
+      throw new Error(
+        `Cannot get conversion factor between different families`,
+      );
+    }
+
+    return fromUnit.conversionToBase / toUnit.conversionToBase;
+  }
+
+  async batchConvert(
+    values: number[],
+    fromUnitId: number,
+    toUnitId: number,
+  ): Promise<number[]> {
+    const factor = await this.getConversionFactor(fromUnitId, toUnitId);
+    return values.map((v) => v * factor);
   }
 }
