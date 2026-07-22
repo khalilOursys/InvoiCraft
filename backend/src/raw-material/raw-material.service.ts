@@ -20,6 +20,7 @@ export class RawMaterialService {
 
   async findAll() {
     return this.prisma.rawMaterial.findMany({
+      include: { unit: true },
       where: { isActive: true },
       orderBy: { createdAt: 'desc' },
     });
@@ -67,29 +68,6 @@ export class RawMaterialService {
       data: {
         amount: {
           increment: amount,
-        },
-      },
-    });
-  }
-
-  async consumeStock(id: number, amount: number) {
-    if (amount <= 0) {
-      throw new BadRequestException('Amount must be greater than 0');
-    }
-
-    const material = await this.findOne(id);
-
-    if (material.amount < amount) {
-      throw new BadRequestException(
-        `Insufficient stock. Available: ${material.amount}${material.unit}, Required: ${amount}${material.unit}`,
-      );
-    }
-
-    return this.prisma.rawMaterial.update({
-      where: { id },
-      data: {
-        amount: {
-          decrement: amount,
         },
       },
     });

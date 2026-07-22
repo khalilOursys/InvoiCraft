@@ -1,3 +1,5 @@
+// app/raw-materials/edit/[id]/page.tsx
+
 "use client";
 
 import React, { useState, useEffect } from "react";
@@ -11,10 +13,23 @@ interface RawMaterial {
   reference: string;
   name: string;
   description?: string;
-  unit: string;
+  unitId: number;
+  unit?: {
+    id: number;
+    code: string;
+    name: string;
+    symbol: string;
+    family: string;
+  };
   amount: number;
   purchasePrice: number;
 }
+
+const fetchUnits = async () => {
+  const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}units`);
+  if (!response.ok) throw new Error("Échec de la récupération des unités");
+  return response.json();
+};
 
 const fetchRawMaterial = async (id: string): Promise<RawMaterial> => {
   const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}raw-materials/${id}`);
@@ -36,15 +51,6 @@ const updateRawMaterial = async ({ id, data }: { id: string; data: any }) => {
   }
   return response.json();
 };
-
-const unitOptions = [
-  { value: "g", label: "Gramme (g)" },
-  { value: "kg", label: "Kilogramme (kg)" },
-  { value: "mg", label: "Milligramme (mg)" },
-  { value: "L", label: "Litre (L)" },
-  { value: "ml", label: "Millilitre (ml)" },
-  { value: "unit", label: "Unité" },
-];
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -78,7 +84,7 @@ function EditRawMaterialContent({ id }: { id: string }) {
     reference: "",
     name: "",
     description: "",
-    unit: "unit",
+    unitId: 0,
     amount: 0,
     purchasePrice: 0,
   });
@@ -87,6 +93,12 @@ function EditRawMaterialContent({ id }: { id: string }) {
   const [toastOpen, setToastOpen] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
   const [toastType, setToastType] = useState<"success" | "error">("success");
+
+  // Récupérer les unités
+  const { data: units, isLoading: isLoadingUnits } = useQuery({
+    queryKey: ["units"],
+    queryFn: fetchUnits,
+  });
 
   const { data: material, isLoading: isLoadingMaterial } = useQuery({
     queryKey: ["raw-material", id],
@@ -106,7 +118,7 @@ function EditRawMaterialContent({ id }: { id: string }) {
         reference: material.reference || "",
         name: material.name,
         description: material.description || "",
-        unit: material.unit,
+        unitId: material.unitId,
         amount: material.amount,
         purchasePrice: material.purchasePrice,
       });
@@ -143,6 +155,12 @@ function EditRawMaterialContent({ id }: { id: string }) {
       return;
     }
 
+    if (!formData.unitId || formData.unitId === 0) {
+      showToast("L'unité est requise", "error");
+      setIsSubmitting(false);
+      return;
+    }
+
     if (formData.purchasePrice <= 0) {
       showToast("Le prix d'achat doit être positif", "error");
       setIsSubmitting(false);
@@ -160,7 +178,7 @@ function EditRawMaterialContent({ id }: { id: string }) {
 
   const handleCancel = () => router.push("/raw-materials");
 
-  if (isLoadingMaterial) {
+  if (isLoadingMaterial || isLoadingUnits) {
     return (
       <div className="p-6">
         <div className="flex justify-center items-center h-64">
@@ -169,6 +187,23 @@ function EditRawMaterialContent({ id }: { id: string }) {
       </div>
     );
   }
+
+  // Grouper les unités par famille
+  const groupedUnits = units?.reduce((acc: any, unit: any) => {
+    if (!acc[unit.family]) {
+      acc[unit.family] = [];
+    }
+    acc[unit.family].push(unit);
+    return acc;
+  }, {});
+
+  const familleLabels: Record<string, string> = {
+    volume: "Volume",
+    weight: "Poids",
+    unit: "Unité"
+  };
+
+  const selectedUnit = units?.find((u: any) => u.id === formData.unitId);
 
   return (
     <Toast.Provider>
@@ -228,16 +263,41 @@ function EditRawMaterialContent({ id }: { id: string }) {
                   </label>
                   <select
                     required
-                    value={formData.unit}
-                    onChange={(e) => setFormData({ ...formData, unit: e.target.value })}
+                    value={formData.unitId}
+                    onChange={(e) => setFormData({ ...formData, unitId: Number(e.target.value) })}
                     className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
                   >
-                    {unitOptions.map((opt) => (
-                      <option key={opt.value} value={opt.value}>
-                        {opt.label}
-                      </option>
+                    <option value={0}>Sélectionner une unité...</option>
+                    {groupedUnits && Object.entries(groupedUnits).map(([family, familyUnits]: [string, any]) => (
+                      <optgroup key={family} label={familleLabels[family] || family.toUpperCase()}>
+                        {familyUnits.map((unit: any) => (
+                          <option key={unit.id} value={unit.id}>
+                            {unit.name} ({unit.symbol})
+                          </option>
+                        ))}
+                      </optgroup>
                     ))}
                   </select>
+                  {selectedUnit && (
+                    <div className="mt-2 space-y-1">
+                      <p className="text-xs text-gray-500">
+                        Famille: {familleLabels[selectedUnit.family] || selectedUnit.family}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        Code: {selectedUnit.code}
+                      </p>
+                      {selectedUnit.description && (
+                        <p className="text-xs text-gray-500">
+                          {selectedUnit.description}
+                        </p>
+                      )}
+                      {selectedUnit.baseUnitId && (
+                        <p className="text-xs text-gray-500">
+                          Unité de base: {units?.find((u: any) => u.id === selectedUnit.baseUnitId)?.name}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Quantité */}
@@ -253,6 +313,11 @@ function EditRawMaterialContent({ id }: { id: string }) {
                     onChange={(e) => setFormData({ ...formData, amount: Number(e.target.value) })}
                     className="w-full rounded-lg border-[1.5px] border-stroke bg-transparent px-5 py-3 outline-none transition focus:border-primary active:border-primary dark:border-form-strokedark dark:bg-form-input dark:text-white"
                   />
+                  {selectedUnit && (
+                    <p className="mt-1 text-xs text-gray-500">
+                      Stock actuel: {formData.amount} {selectedUnit.symbol}
+                    </p>
+                  )}
                 </div>
 
                 {/* Prix d'achat */}

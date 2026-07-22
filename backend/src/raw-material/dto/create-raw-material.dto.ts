@@ -20,8 +20,10 @@ export class CreateRawMaterialDto {
   @IsString()
   description?: string;
 
-  @IsIn(['g', 'kg', 'mg', 'L', 'ml', 'unit'])
-  unit: string;
+  // Changed from unit to unitId
+  @IsInt()
+  @IsOptional()
+  unitId: number;
 
   @IsNumber()
   @Min(0)

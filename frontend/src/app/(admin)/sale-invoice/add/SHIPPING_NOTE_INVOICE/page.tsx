@@ -74,7 +74,7 @@ export default function AddShippingNoteInvoicePage() {
         onSuccess: () => {
             queryClient.invalidateQueries({ queryKey: ["saleInvoices"] });
             showToast("✅ Facture bon sortie ajoutée avec succès", "success");
-            //setTimeout(() => router.push("/sale-invoices/list/SHIPPING_NOTE_INVOICE"), 1500);
+            setTimeout(() => router.push("/sale-invoice/list/SHIPPING_NOTE_INVOICE"), 1500);
         },
         onError: (error: Error) => {
             showToast(`❌ ${error.message || "Erreur lors de l'enregistrement"}`, "error");
@@ -227,7 +227,7 @@ export default function AddShippingNoteInvoicePage() {
 
                 <div className="flex items-center justify-between mb-4">
                     <button
-                        onClick={() => router.push("/sale-invoices/list/SHIPPING_NOTE_INVOICE")}
+                        onClick={() => router.push("/sale-invoice/list/SHIPPING_NOTE_INVOICE")}
                         className="rounded-md bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 transition-colors flex items-center gap-2"
                     >
                         ← Retour à la liste
@@ -516,7 +516,7 @@ export default function AddShippingNoteInvoicePage() {
                             <div className="mt-6 flex gap-4">
                                 <button
                                     type="button"
-                                    onClick={() => router.push("/sale-invoices/list/SHIPPING_NOTE_INVOICE")}
+                                    onClick={() => router.push("/sale-invoice/list/SHIPPING_NOTE_INVOICE")}
                                     className="rounded-md border border-stroke px-6 py-3 font-medium hover:bg-gray-100"
                                 >
                                     Annuler

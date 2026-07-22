@@ -12,10 +12,129 @@ import { CreateProductCraftDto } from './dto/create-product-craft.dto';
 import { UpdateProductCraftDto } from './dto/update-product-craft.dto';
 import { Prisma } from '@prisma/client';
 import { SearchProductsDto } from './dto/search-products.dto';
+import { UnitService } from '../unit/unit.service';
+import { UnitConverter } from '../utils/unit-converter.util';
 
 @Injectable()
 export class ProductsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly unitService: UnitService,
+    private readonly unitConverter: UnitConverter,
+  ) {}
+
+  // ==================== HELPER METHODS ====================
+
+  private async validateUnit(unitId: number) {
+    try {
+      const unit = await this.unitService.getUnitById(unitId);
+      if (!unit) {
+        throw new BadRequestException(`Unit with id ${unitId} not found.`);
+      }
+      return unit;
+    } catch (error) {
+      if (error instanceof NotFoundException) {
+        throw new BadRequestException(`Unit with id ${unitId} not found.`);
+      }
+      throw error;
+    }
+  }
+
+  private async validateCraftProductUnits(
+    craftProductUnitId: number,
+    materials: any[],
+  ): Promise<void> {
+    for (const material of materials) {
+      const rawMaterial = await this.prisma.rawMaterial.findUnique({
+        where: { id: material.rawMaterialId },
+        include: { unit: true },
+      });
+
+      if (!rawMaterial) {
+        throw new NotFoundException(
+          `Raw material with ID ${material.rawMaterialId} not found`,
+        );
+      }
+
+      // Check if craft product unit and material unit are compatible
+      const compatible1 = await this.unitConverter.areUnitsCompatible(
+        craftProductUnitId,
+        material.unitId,
+      );
+
+      if (!compatible1) {
+        const cpUnit = await this.unitService.getUnitById(craftProductUnitId);
+        const mUnit = await this.unitService.getUnitById(material.unitId);
+
+        throw new BadRequestException(
+          `Incompatible units: Craft product uses ${cpUnit.code} (${cpUnit.family}), ` +
+            `Material uses ${mUnit.code} (${mUnit.family})`,
+        );
+      }
+
+      // Check if material unit and raw material unit are compatible
+      const compatible2 = await this.unitConverter.areUnitsCompatible(
+        material.unitId,
+        rawMaterial.unitId,
+      );
+
+      if (!compatible2) {
+        const mUnit = await this.unitService.getUnitById(material.unitId);
+        const rmUnit = await this.unitService.getUnitById(rawMaterial.unitId);
+
+        throw new BadRequestException(
+          `Incompatible units: Material uses ${mUnit.code} (${mUnit.family}), ` +
+            `Raw material uses ${rmUnit.code} (${rmUnit.family})`,
+        );
+      }
+    }
+  }
+
+  private async calculateCraftProductTotalCost(
+    craftProduct: any,
+  ): Promise<number> {
+    let totalCost = 0;
+
+    if (craftProduct.materials) {
+      for (const material of craftProduct.materials) {
+        const rawMaterial = await this.prisma.rawMaterial.findUnique({
+          where: { id: material.rawMaterialId },
+          include: { unit: true },
+        });
+
+        if (rawMaterial) {
+          // Convert material amount to raw material unit
+          const amountInRawUnit = await this.unitConverter.convert(
+            material.amount,
+            material.unitId,
+            rawMaterial.unitId,
+          );
+
+          // Calculate cost: amount * quantity * price per unit
+          totalCost +=
+            amountInRawUnit * craftProduct.amount * rawMaterial.purchasePrice;
+        }
+      }
+    }
+
+    if (craftProduct.services) {
+      for (const service of craftProduct.services) {
+        const serviceData = await this.prisma.service.findUnique({
+          where: { id: service.serviceId || service },
+        });
+
+        if (serviceData) {
+          totalCost += serviceData.price;
+        }
+      }
+    }
+
+    return totalCost;
+  }
+
+  private calculateSalePrice(totalCost: number, marginPercent: number): number {
+    return totalCost * (1 + marginPercent / 100);
+  }
 
   // ==================== PRODUCT METHODS ====================
 
@@ -238,7 +357,7 @@ export class ProductsService {
         },
       },
     });
-  }
+  } // src/products/products.service.ts
 
   async findOne(id: number) {
     const product = await this.prisma.product.findUnique({
@@ -246,6 +365,26 @@ export class ProductsService {
       include: {
         category: true,
         brand: true,
+        craftProducts: {
+          include: {
+            unit: true,
+            craftMaterials: {
+              include: {
+                rawMaterial: {
+                  include: {
+                    unit: true,
+                  },
+                },
+                unit: true, // Include the unit for the material
+              },
+            },
+            craftServices: {
+              include: {
+                service: true,
+              },
+            },
+          },
+        },
         purchaseInvoiceItems: {
           include: {
             invoice: true,
@@ -264,6 +403,49 @@ export class ProductsService {
     }
 
     return product;
+  }
+
+  // Also update the getProductWithCraft method if you want to keep it separate
+  async getProductWithCraft(id: number) {
+    const product = await this.prisma.product.findUnique({
+      where: { id },
+      include: {
+        category: true,
+        brand: true,
+        craftProducts: {
+          include: {
+            unit: true,
+            craftMaterials: {
+              include: {
+                rawMaterial: {
+                  include: {
+                    unit: true,
+                  },
+                },
+                unit: true,
+              },
+            },
+            craftServices: {
+              include: {
+                service: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!product) {
+      throw new NotFoundException(`Product with id ${id} not found.`);
+    }
+
+    return {
+      product,
+      craftProduct:
+        product.craftProducts && product.craftProducts.length > 0
+          ? product.craftProducts[0]
+          : null,
+    };
   }
 
   async findByReference(reference: string) {
@@ -624,6 +806,23 @@ export class ProductsService {
 
       // Handle CraftProduct creation
       if (data.craftProduct) {
+        // Validate unit - ensure unitId exists
+        if (!data.craftProduct.unitId) {
+          throw new BadRequestException('unitId is required for craft product');
+        }
+        await this.validateUnit(data.craftProduct.unitId);
+
+        // Validate materials units
+        /* if (
+          data.craftProduct.materials &&
+          data.craftProduct.materials.length > 0
+        ) {
+          await this.validateCraftProductUnits(
+            data.craftProduct.unitId,
+            data.craftProduct.materials,
+          );
+        } */
+
         if (data.craftProduct.reference) {
           const existingByRef = await prisma.craftProduct.findFirst({
             where: { reference: data.craftProduct.reference },
@@ -635,19 +834,42 @@ export class ProductsService {
           }
         }
 
-        const craftProductData = { ...data.craftProduct };
-        delete (craftProductData as any).materials;
-        delete (craftProductData as any).serviceIds;
+        // Calculate total cost and sale price
+        const totalCost = await this.calculateCraftProductTotalCost({
+          amount: data.craftProduct.amount,
+          materials: data.craftProduct.materials || [],
+          services: data.craftProduct.serviceIds || [],
+        });
+        const salePrice = this.calculateSalePrice(
+          totalCost,
+          data.craftProduct.marginPercent,
+        );
+
+        // Prepare craft product data
+        const craftProductData: any = {
+          reference: data.craftProduct.reference,
+          name: data.craftProduct.name,
+          description: data.craftProduct.description,
+          unitId: data.craftProduct.unitId,
+          amount: data.craftProduct.amount,
+          productId: data.craftProduct.productId || result.product?.id || null,
+          marginPercent: data.craftProduct.marginPercent,
+          vat: data.craftProduct.vat,
+          minStock: data.craftProduct.minStock || 0,
+          img: imageUrl || data.craftProduct.img,
+          isActive: data.craftProduct.isActive ?? true,
+          totalCost: totalCost,
+          salePrice: salePrice,
+        };
 
         const craftProduct = await prisma.craftProduct.create({
-          data: {
-            ...craftProductData,
-            img: imageUrl || craftProductData.img,
-            productId:
-              data.craftProduct.productId || result.product?.id || null,
+          data: craftProductData,
+          include: {
+            unit: true,
           },
         });
 
+        // Add materials if provided
         if (
           data.craftProduct.materials &&
           data.craftProduct.materials.length > 0
@@ -667,11 +889,13 @@ export class ProductsService {
                 craftProductId: craftProduct.id,
                 rawMaterialId: material.rawMaterialId,
                 amount: material.amount,
+                unitId: material.unitId,
               },
             });
           }
         }
 
+        // Add services if provided
         if (
           data.craftProduct.serviceIds &&
           data.craftProduct.serviceIds.length > 0
@@ -695,6 +919,7 @@ export class ProductsService {
           }
         }
 
+        // Fetch complete craft product with all relations
         const completeCraftProduct = await prisma.craftProduct.findUnique({
           where: { id: craftProduct.id },
           include: {
@@ -704,9 +929,15 @@ export class ProductsService {
                 brand: true,
               },
             },
+            unit: true,
             craftMaterials: {
               include: {
-                rawMaterial: true,
+                rawMaterial: {
+                  include: {
+                    unit: true,
+                  },
+                },
+                unit: true,
               },
             },
             craftServices: {
@@ -724,10 +955,8 @@ export class ProductsService {
     });
   }
 
-  // src/products/products.service.ts
-
   async updateProductCraft(
-    id: number, // This is now the PRODUCT ID
+    id: number,
     data: UpdateProductCraftDto,
     imageUrl?: string,
     userId: number = 1,
@@ -754,9 +983,15 @@ export class ProductsService {
           productId: id,
         },
         include: {
+          unit: true,
           craftMaterials: {
             include: {
-              rawMaterial: true,
+              rawMaterial: {
+                include: {
+                  unit: true,
+                },
+              },
+              unit: true,
             },
           },
           craftServices: {
@@ -852,10 +1087,27 @@ export class ProductsService {
         result.product = updatedProduct;
       }
 
-      // Handle CraftProduct update if it exists
+      // Handle CraftProduct update
       if (existingCraftProduct) {
-        // Only update craft product if craftProduct data is provided
         if (data.craftProduct) {
+          // Validate unit if provided
+          if (data.craftProduct.unitId) {
+            await this.validateUnit(data.craftProduct.unitId);
+          }
+
+          // Validate materials units if provided
+          /* if (
+            data.craftProduct.materials &&
+            data.craftProduct.materials.length > 0
+          ) {
+            const unitId =
+              data.craftProduct.unitId || existingCraftProduct.unitId;
+            await this.validateCraftProductUnits(
+              unitId,
+              data.craftProduct.materials,
+            );
+          } */
+
           // Check reference uniqueness
           if (data.craftProduct.reference) {
             const existing = await prisma.craftProduct.findFirst({
@@ -871,17 +1123,47 @@ export class ProductsService {
             }
           }
 
-          const craftUpdateData = { ...data.craftProduct };
-          delete (craftUpdateData as any).materials;
-          delete (craftUpdateData as any).serviceIds;
+          // Prepare update data - only include fields that are provided
+          const craftUpdateData: any = {};
 
-          await prisma.craftProduct.update({
-            where: { id: existingCraftProduct.id },
-            data: {
-              ...craftUpdateData,
-              img: imageUrl || craftUpdateData.img,
-            },
-          });
+          if (data.craftProduct.reference !== undefined)
+            craftUpdateData.reference = data.craftProduct.reference;
+          if (data.craftProduct.name !== undefined)
+            craftUpdateData.name = data.craftProduct.name;
+          if (data.craftProduct.description !== undefined)
+            craftUpdateData.description = data.craftProduct.description;
+          if (data.craftProduct.unitId !== undefined)
+            craftUpdateData.unitId = data.craftProduct.unitId;
+          if (data.craftProduct.amount !== undefined)
+            craftUpdateData.amount = data.craftProduct.amount;
+          if (data.craftProduct.productId !== undefined)
+            craftUpdateData.productId = data.craftProduct.productId;
+          if (data.craftProduct.marginPercent !== undefined)
+            craftUpdateData.marginPercent = data.craftProduct.marginPercent;
+          if (data.craftProduct.vat !== undefined)
+            craftUpdateData.vat = data.craftProduct.vat;
+          if (data.craftProduct.minStock !== undefined)
+            craftUpdateData.minStock = data.craftProduct.minStock;
+          if (data.craftProduct.isActive !== undefined)
+            craftUpdateData.isActive = data.craftProduct.isActive;
+          if (data.craftProduct.totalCost !== undefined)
+            craftUpdateData.totalCost = data.craftProduct.totalCost;
+          if (data.craftProduct.salePrice !== undefined)
+            craftUpdateData.salePrice = data.craftProduct.salePrice;
+
+          if (imageUrl) {
+            craftUpdateData.img = imageUrl;
+          } else if (data.craftProduct.img !== undefined) {
+            craftUpdateData.img = data.craftProduct.img;
+          }
+
+          // Only update if there's data to update
+          if (Object.keys(craftUpdateData).length > 0) {
+            await prisma.craftProduct.update({
+              where: { id: existingCraftProduct.id },
+              data: craftUpdateData,
+            });
+          }
 
           // Update materials if provided
           if (data.craftProduct.materials) {
@@ -904,6 +1186,7 @@ export class ProductsService {
                   craftProductId: existingCraftProduct.id,
                   rawMaterialId: material.rawMaterialId,
                   amount: material.amount,
+                  unitId: material.unitId,
                 },
               });
             }
@@ -933,6 +1216,61 @@ export class ProductsService {
               });
             }
           }
+
+          // Recalculate costs if amount, materials, or margin changed
+          if (
+            data.craftProduct.amount !== undefined ||
+            data.craftProduct.materials !== undefined ||
+            data.craftProduct.marginPercent !== undefined ||
+            data.craftProduct.serviceIds !== undefined
+          ) {
+            // Get current craft product data safely
+            const current = await prisma.craftProduct.findUnique({
+              where: { id: existingCraftProduct.id },
+              include: {
+                craftMaterials: true,
+                craftServices: true,
+              },
+            });
+
+            // Ensure current is not null
+            if (!current) {
+              throw new NotFoundException(
+                `Craft product with id ${existingCraftProduct.id} not found`,
+              );
+            }
+
+            const totalCost = await this.calculateCraftProductTotalCost({
+              amount:
+                data.craftProduct.amount !== undefined
+                  ? data.craftProduct.amount
+                  : current.amount,
+              materials:
+                data.craftProduct.materials ||
+                current.craftMaterials.map((m) => ({
+                  rawMaterialId: m.rawMaterialId,
+                  amount: m.amount,
+                  unitId: m.unitId,
+                })),
+              services:
+                data.craftProduct.serviceIds ||
+                current.craftServices.map((s) => s.serviceId),
+            });
+
+            const marginPercent =
+              data.craftProduct.marginPercent !== undefined
+                ? data.craftProduct.marginPercent
+                : current.marginPercent;
+            const salePrice = this.calculateSalePrice(totalCost, marginPercent);
+
+            await prisma.craftProduct.update({
+              where: { id: existingCraftProduct.id },
+              data: {
+                totalCost,
+                salePrice,
+              },
+            });
+          }
         }
 
         // Fetch the complete updated craft product with all relations
@@ -945,9 +1283,15 @@ export class ProductsService {
                 brand: true,
               },
             },
+            unit: true,
             craftMaterials: {
               include: {
-                rawMaterial: true,
+                rawMaterial: {
+                  include: {
+                    unit: true,
+                  },
+                },
+                unit: true,
               },
             },
             craftServices: {
@@ -962,6 +1306,25 @@ export class ProductsService {
       } else {
         // If no craft product exists but craftProduct data is provided, create it
         if (data.craftProduct) {
+          // Validate unit - ensure unitId exists
+          if (!data.craftProduct.unitId) {
+            throw new BadRequestException(
+              'unitId is required for craft product',
+            );
+          }
+          await this.validateUnit(data.craftProduct.unitId);
+
+          // Validate materials units
+          /* if (
+            data.craftProduct.materials &&
+            data.craftProduct.materials.length > 0
+          ) {
+            await this.validateCraftProductUnits(
+              data.craftProduct.unitId,
+              data.craftProduct.materials,
+            );
+          } */
+
           // Check reference uniqueness
           if (data.craftProduct.reference) {
             const existing = await prisma.craftProduct.findFirst({
@@ -976,15 +1339,38 @@ export class ProductsService {
             }
           }
 
-          const craftCreateData = { ...data.craftProduct };
-          delete (craftCreateData as any).materials;
-          delete (craftCreateData as any).serviceIds;
+          // Calculate total cost and sale price
+          const totalCost = await this.calculateCraftProductTotalCost({
+            amount: data.craftProduct.amount || 0,
+            materials: data.craftProduct.materials || [],
+            services: data.craftProduct.serviceIds || [],
+          });
+          const salePrice = this.calculateSalePrice(
+            totalCost,
+            data.craftProduct.marginPercent || 30,
+          );
+
+          // Prepare create data
+          const craftCreateData: any = {
+            reference: data.craftProduct.reference,
+            name: data.craftProduct.name,
+            description: data.craftProduct.description,
+            unitId: data.craftProduct.unitId,
+            amount: data.craftProduct.amount || 0,
+            productId: id,
+            marginPercent: data.craftProduct.marginPercent || 30,
+            vat: data.craftProduct.vat || 19,
+            minStock: data.craftProduct.minStock || 0,
+            img: imageUrl || data.craftProduct.img,
+            isActive: data.craftProduct.isActive ?? true,
+            totalCost: totalCost,
+            salePrice: salePrice,
+          };
 
           const newCraftProduct = await prisma.craftProduct.create({
-            data: {
-              ...craftCreateData,
-              img: imageUrl || craftCreateData.img,
-              productId: id, // Link to the product
+            data: craftCreateData,
+            include: {
+              unit: true,
             },
           });
 
@@ -1005,6 +1391,7 @@ export class ProductsService {
                   craftProductId: newCraftProduct.id,
                   rawMaterialId: material.rawMaterialId,
                   amount: material.amount,
+                  unitId: material.unitId,
                 },
               });
             }
@@ -1041,9 +1428,15 @@ export class ProductsService {
                   brand: true,
                 },
               },
+              unit: true,
               craftMaterials: {
                 include: {
-                  rawMaterial: true,
+                  rawMaterial: {
+                    include: {
+                      unit: true,
+                    },
+                  },
+                  unit: true,
                 },
               },
               craftServices: {
@@ -1056,7 +1449,6 @@ export class ProductsService {
 
           result.craftProduct = completeCraftProduct;
         } else {
-          // No craft product exists and no craft data provided
           result.craftProduct = null;
         }
       }
@@ -1065,29 +1457,25 @@ export class ProductsService {
     });
   }
 
-  async getProductWithCraft(id: number) {
-    // First, get the product
-    const product = await this.prisma.product.findUnique({
+  async getCraftProductById(id: number) {
+    const craftProduct = await this.prisma.craftProduct.findUnique({
       where: { id },
       include: {
-        category: true,
-        brand: true,
-      },
-    });
-
-    if (!product) {
-      throw new NotFoundException(`Product with id ${id} not found.`);
-    }
-
-    // Check if this product is linked to a craft product
-    const craftProduct = await this.prisma.craftProduct.findFirst({
-      where: {
-        productId: id,
-      },
-      include: {
+        product: {
+          include: {
+            category: true,
+            brand: true,
+          },
+        },
+        unit: true,
         craftMaterials: {
           include: {
-            rawMaterial: true,
+            rawMaterial: {
+              include: {
+                unit: true,
+              },
+            },
+            unit: true,
           },
         },
         craftServices: {
@@ -1098,10 +1486,77 @@ export class ProductsService {
       },
     });
 
-    // Return both product and craft product (if exists)
-    return {
-      product,
-      craftProduct: craftProduct || null,
-    };
+    if (!craftProduct) {
+      throw new NotFoundException(`Craft product with id ${id} not found.`);
+    }
+
+    return craftProduct;
+  }
+
+  async getAllCraftProducts() {
+    return await this.prisma.craftProduct.findMany({
+      where: {
+        isActive: true,
+      },
+      include: {
+        product: {
+          include: {
+            category: true,
+            brand: true,
+          },
+        },
+        unit: true,
+        craftMaterials: {
+          include: {
+            rawMaterial: {
+              include: {
+                unit: true,
+              },
+            },
+            unit: true,
+          },
+        },
+        craftServices: {
+          include: {
+            service: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: 'desc',
+      },
+    });
+  }
+
+  async deleteCraftProduct(id: number) {
+    const craftProduct = await this.prisma.craftProduct.findUnique({
+      where: { id },
+      include: {
+        craftMaterials: true,
+        craftServices: true,
+      },
+    });
+
+    if (!craftProduct) {
+      throw new NotFoundException(`Craft product with id ${id} not found.`);
+    }
+
+    return await this.prisma.$transaction(async (prisma) => {
+      // Delete related materials and services
+      await prisma.craftProductMaterial.deleteMany({
+        where: { craftProductId: id },
+      });
+
+      await prisma.craftProductService.deleteMany({
+        where: { craftProductId: id },
+      });
+
+      // Delete the craft product
+      await prisma.craftProduct.delete({
+        where: { id },
+      });
+
+      return { message: 'Craft product deleted successfully' };
+    });
   }
 }

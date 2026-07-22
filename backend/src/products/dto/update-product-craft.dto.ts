@@ -7,7 +7,6 @@ import {
   Min,
   Max,
   IsInt,
-  IsIn,
   IsArray,
   ValidateNested,
   IsBoolean,
@@ -24,6 +23,10 @@ export class UpdateCraftProductMaterialDto {
   @Min(0)
   @IsNotEmpty()
   amount: number;
+
+  @IsInt()
+  @IsNotEmpty()
+  unitId: number; // Added unitId for the material
 }
 
 export class UpdateProductDto {
@@ -109,8 +112,9 @@ export class UpdateCraftProductDto {
   @IsString()
   description?: string;
 
-  @IsIn(['mg', 'ml', 'g', 'L', 'kg', 'unit'])
-  unit: string;
+  @IsInt()
+  @IsOptional()
+  unitId?: number;
 
   @IsNumber()
   @Min(0)

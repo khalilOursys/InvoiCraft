@@ -1,17 +1,18 @@
+// src/production-order/dto/create-production-order.dto.ts
+
 import {
-  IsOptional,
+  IsString,
   IsNumber,
-  Min,
-  Max,
-  IsInt,
-  IsIn,
+  IsOptional,
+  IsEnum,
   IsArray,
   ValidateNested,
-  IsDate,
-  IsEnum,
-  IsString,
+  IsDateString,
+  IsInt,
+  Min,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ProductionOrderStatus, ProductionOrderPriority } from '@prisma/client';
 
 export class ProductionOrderMaterialDto {
   @IsInt()
@@ -20,83 +21,67 @@ export class ProductionOrderMaterialDto {
   @IsNumber()
   @Min(0)
   amount: number;
-}
 
-export enum ProductionOrderStatus {
-  PENDING = 'PENDING',
-  IN_PROGRESS = 'IN_PROGRESS',
-  COMPLETED = 'COMPLETED',
-  CANCELLED = 'CANCELLED',
-  ON_HOLD = 'ON_HOLD',
-}
-
-export enum ProductionOrderPriority {
-  LOW = 'LOW',
-  MEDIUM = 'MEDIUM',
-  HIGH = 'HIGH',
-  URGENT = 'URGENT',
+  @IsInt()
+  unitId: number; // Unit for this specific material
 }
 
 export class CreateProductionOrderDto {
-  @IsIn(['mg', 'ml', 'g', 'L', 'kg', 'unit'])
-  unit: string;
+  @IsInt()
+  unitId: number;
 
   @IsNumber()
   @Min(0)
   amount: number;
 
-  @IsOptional()
   @IsInt()
+  @IsOptional()
   productId?: number;
+
+  @IsNumber()
+  @IsOptional()
+  marginPercent?: number;
+
+  @IsNumber()
+  @IsOptional()
+  vat?: number;
+
+  @IsDateString()
+  @IsOptional()
+  orderDate?: string;
+
+  @IsDateString()
+  @IsOptional()
+  expectedDelivery?: string;
+
+  @IsEnum(ProductionOrderStatus)
+  @IsOptional()
+  status?: ProductionOrderStatus;
+
+  @IsEnum(ProductionOrderPriority)
+  @IsOptional()
+  priority?: ProductionOrderPriority;
+
+  @IsString()
+  @IsOptional()
+  notes?: string;
+
+  @IsNumber()
+  @IsOptional()
+  quantityProduced?: number;
+
+  @IsNumber()
+  @IsOptional()
+  wasteAmount?: number;
 
   @IsArray()
   @ValidateNested({ each: true })
   @Type(() => ProductionOrderMaterialDto)
-  materials: ProductionOrderMaterialDto[];
+  @IsOptional()
+  materials?: ProductionOrderMaterialDto[];
 
   @IsArray()
   @IsInt({ each: true })
-  serviceIds: number[];
-
-  @IsNumber()
-  @Min(0)
-  marginPercent: number;
-
-  @IsNumber()
-  @Min(0)
-  @Max(100)
-  vat: number;
-
-  // Production Order specific fields
   @IsOptional()
-  @IsDate()
-  @Type(() => Date)
-  orderDate?: Date;
-
-  @IsOptional()
-  @IsDate()
-  @Type(() => Date)
-  expectedDelivery?: Date;
-
-  @IsOptional()
-  @IsEnum(ProductionOrderStatus)
-  status?: ProductionOrderStatus;
-
-  @IsOptional()
-  @IsEnum(ProductionOrderPriority)
-  priority?: ProductionOrderPriority;
-
-  @IsOptional()
-  @IsString()
-  notes?: string;
-
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  quantityProduced?: number;
-
-  @IsOptional()
-  @IsNumber()
-  @Min(0)
-  wasteAmount?: number;
+  serviceIds?: number[];
 }

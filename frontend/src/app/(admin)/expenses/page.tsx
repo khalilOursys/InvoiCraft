@@ -112,7 +112,7 @@ export default function ExpensesPage() {
         return date.toLocaleDateString("fr-FR");
       },
     },
-    {
+    /* {
       accessorKey: "receiptImage",
       header: "Justificatif",
       size: 120,
@@ -130,7 +130,7 @@ export default function ExpensesPage() {
           <span className="text-gray-400 text-sm">Aucun</span>
         );
       },
-    },
+    }, */
     {
       id: "actions",
       header: "Actions",
